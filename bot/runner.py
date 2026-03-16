@@ -35,8 +35,9 @@ def run(settings: BotSettings) -> None:
         )
 
     logger.info(
-        "bot start strategy=%s dry_run=%s tick_seconds=%s cancel_orders_on_stop=%s",
+        "bot start strategy=%s live=%s dry_run=%s tick_seconds=%s cancel_orders_on_stop=%s",
         strategy_name,
+        settings.live,
         settings.dry_run,
         settings.tick_seconds,
         settings.cancel_orders_on_stop,
