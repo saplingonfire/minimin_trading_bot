@@ -65,7 +65,7 @@ cp .env.example .env
 python scripts/run_bot.py --strategy example [--dry-run]
 ```
 
-- **Strategies**: `example` (place a MARKET buy every N ticks for testing). Add more under `bot/strategies/` and register in `bot/strategies/__init__.py`.
+- **Strategies**: `example` (place a MARKET buy every N ticks for testing); `cross_sectional_momentum` (weekly rebalance, top N by 90d return, 200 MA filter); `momentum_20_50` (EMA 20/50 crossover, ATR trailing stop); `bollinger_rsi` (BB + RSI oversold, 4H regime filter). Add more under `bot/strategies/` and register in `bot/strategies/__init__.py`. Example params in `.env.example`.
 - **Config**: Env vars in `.env` or environment; see `.env.example`. CLI: `--strategy`, `--dry-run`, `--tick-seconds`, `--env-file`.
 - **Hackathon (AWS)**: Use `tmux` so the bot keeps running after you disconnect; see the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816).
 
