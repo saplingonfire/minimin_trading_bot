@@ -13,6 +13,7 @@ class BotSettings:
     api_key: str
     secret_key: str
     base_url: str
+    live: bool  # True = live credentials, False = test account credentials
     strategy_name: str
     strategy_params: dict[str, Any]
     tick_seconds: int
@@ -50,12 +51,24 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
     """Load settings from env, apply CLI overrides, validate. Never log secrets."""
     overrides = cli_overrides or {}
 
-    api_key = overrides.get("api_key") or os.environ.get("ROOSTOO_API_KEY", "")
-    secret_key = overrides.get("secret_key") or os.environ.get("ROOSTOO_SECRET_KEY", "")
-    base_url = (
-        overrides.get("base_url")
-        or os.environ.get("ROOSTOO_BASE_URL", "https://mock-api.roostoo.com")
-    ).rstrip("/")
+    live = overrides.get("live")
+    if live is None:
+        live = _parse_bool(os.environ.get("BOT_LIVE"))
+
+    if live:
+        api_key = overrides.get("api_key") or os.environ.get("ROOSTOO_API_KEY", "")
+        secret_key = overrides.get("secret_key") or os.environ.get("ROOSTOO_SECRET_KEY", "")
+        base_url = (
+            overrides.get("base_url")
+            or os.environ.get("ROOSTOO_BASE_URL", "https://mock-api.roostoo.com")
+        ).rstrip("/")
+    else:
+        api_key = overrides.get("api_key") or os.environ.get("ROOSTOO_TEST_API_KEY", "")
+        secret_key = overrides.get("secret_key") or os.environ.get("ROOSTOO_TEST_SECRET_KEY", "")
+        base_url = (
+            overrides.get("base_url")
+            or os.environ.get("ROOSTOO_TEST_BASE_URL", "https://mock-api.roostoo.com")
+        ).rstrip("/")
 
     strategy_name = (
         overrides.get("strategy_name") or os.environ.get("BOT_STRATEGY", "")
@@ -97,14 +110,14 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
         max_notional = _parse_float(os.environ.get("BOT_MAX_ORDER_NOTIONAL"))
 
     if not api_key or not secret_key:
-        raise ValueError(
-            "ROOSTOO_API_KEY and ROOSTOO_SECRET_KEY are required (set in env or .env)"
-        )
+        which = "live (ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY)" if live else "test (ROOSTOO_TEST_API_KEY, ROOSTOO_TEST_SECRET_KEY)"
+        raise ValueError(f"Credentials are required for {which}; set in env or .env")
 
     return BotSettings(
         api_key=api_key or "",
         secret_key=secret_key or "",
         base_url=base_url,
+        live=live,
         strategy_name=strategy_name,
         strategy_params=strategy_params,
         tick_seconds=tick_seconds,
