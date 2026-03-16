@@ -1,6 +1,7 @@
 """Run loop: load strategy, build context each tick, execute signals, shutdown cleanly."""
 
 import logging
+import os
 import signal
 import time
 
@@ -9,6 +10,7 @@ from roostoo.client import RoostooClient
 from bot.base import Strategy, TradingContext
 from bot.execution import Executor
 from bot.market import build_context
+from bot.ohlcv import BinanceHistoricalFileProvider
 from bot.strategies import STRATEGIES
 from config.settings import BotSettings
 
@@ -66,6 +68,11 @@ def run(settings: BotSettings) -> None:
     strategy_cls = STRATEGIES[strategy_name]
     strategy = strategy_cls(settings.strategy_params)
 
+    ohlcv_provider = None
+    data_dir = os.environ.get("BINANCE_DATA_DIR", "").strip()
+    if data_dir:
+        ohlcv_provider = BinanceHistoricalFileProvider(data_dir)
+
     signal.signal(signal.SIGTERM, _shutdown_handler)
     signal.signal(signal.SIGINT, _shutdown_handler)
 
@@ -82,6 +89,7 @@ def run(settings: BotSettings) -> None:
                     client,
                     pair=pair,
                     exchange_info=exchange_info,
+                    ohlcv_provider=ohlcv_provider,
                 )
             except Exception as e:
                 logger.exception("build_context failed")

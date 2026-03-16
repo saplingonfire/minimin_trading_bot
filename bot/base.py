@@ -1,8 +1,13 @@
 """Strategy contract and shared types: Context, Signals, Strategy ABC. No I/O."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from bot.ohlcv import OHLCVProvider
 
 
 @dataclass(frozen=True)
@@ -36,6 +41,7 @@ class TradingContext:
     balance: dict[str, Any]
     pending_orders: list[dict[str, Any]]
     exchange_info: dict[str, Any] | None = None
+    ohlcv_provider: OHLCVProvider | None = None
 
 
 class Strategy(ABC):

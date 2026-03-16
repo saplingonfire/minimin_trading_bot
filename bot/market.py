@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from bot.base import TradingContext
 
 if TYPE_CHECKING:
+    from bot.ohlcv import OHLCVProvider
     from roostoo.client import RoostooClient
 
 
@@ -12,6 +13,7 @@ def build_context(
     client: "RoostooClient",
     pair: str | None = None,
     exchange_info: dict[str, Any] | None = None,
+    ohlcv_provider: "OHLCVProvider | None" = None,
 ) -> TradingContext:
     """Fetch market data and account state, return a read-only TradingContext."""
     st = client.get_server_time()
@@ -38,4 +40,5 @@ def build_context(
         balance=balance,
         pending_orders=pending_orders,
         exchange_info=exchange_info,
+        ohlcv_provider=ohlcv_provider,
     )
