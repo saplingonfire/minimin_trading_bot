@@ -16,6 +16,9 @@ dependencies = [
 dev = [
     "pytest>=7",
 ]
+binance = [
+    "binance-historical-data",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

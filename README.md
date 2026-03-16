@@ -69,6 +69,18 @@ python scripts/run_bot.py --strategy example [--dry-run]
 - **Config**: Env vars in `.env` or environment; see `.env.example`. CLI: `--strategy`, `--dry-run`, `--tick-seconds`, `--env-file`.
 - **Hackathon (AWS)**: Use `tmux` so the bot keeps running after you disconnect; see the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816).
 
+### Historical data (OHLCV)
+
+Strategies that need candles (e.g. momentum, Bollinger/RSI) read from local CSV dumps. The bot does **not** download data at runtime.
+
+1. **Install the optional Binance sync dependency**: `pip install .[binance]` (or `pip install binance-historical-data`).
+2. **Sync data** (run manually or via cron):
+   ```bash
+   python scripts/sync_binance_historical.py --data-dir data/binance --interval 1h --interval 4h
+   ```
+   Use `--tickers BTC,ETH,BNB` to limit pairs; see `--help` for options.
+3. **Point the bot at the dump directory**: set `BINANCE_DATA_DIR=data/binance` in `.env` (use the same path as `--data-dir`). The runner reads `BINANCE_DATA_DIR` and passes it to the OHLCV provider. If `BINANCE_DATA_DIR` is not set, `context.ohlcv_provider` is `None` and strategies that need OHLCV should no-op.
+
 ## API reference
 
 - [Roostoo Public API docs](https://github.com/roostoo/Roostoo-API-Documents)
