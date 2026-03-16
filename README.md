@@ -53,6 +53,22 @@ print(client.cancel_order(pair="BNB/USD"))
 
 On HTTP or API errors (e.g. `Success: false`), the client raises `RoostooAPIError` with the message and optional `status_code`, `response_body`, and `raw` response.
 
+## Running the bot
+
+The repo includes a modular trading bot that uses the SDK. From the repo root:
+
+```bash
+pip install -e .
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env: set ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY, BOT_STRATEGY
+python scripts/run_bot.py --strategy example [--dry-run]
+```
+
+- **Strategies**: `example` (place a MARKET buy every N ticks for testing). Add more under `bot/strategies/` and register in `bot/strategies/__init__.py`.
+- **Config**: Env vars in `.env` or environment; see `.env.example`. CLI: `--strategy`, `--dry-run`, `--tick-seconds`, `--env-file`.
+- **Hackathon (AWS)**: Use `tmux` so the bot keeps running after you disconnect; see the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816).
+
 ## API reference
 
 - [Roostoo Public API docs](https://github.com/roostoo/Roostoo-API-Documents)
