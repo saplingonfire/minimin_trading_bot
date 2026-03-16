@@ -24,6 +24,9 @@ from bot.runner import run
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the trading bot")
     parser.add_argument("--strategy", "-s", help="Strategy name (overrides BOT_STRATEGY)")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--live", action="store_true", help="Use live credentials (ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY)")
+    group.add_argument("--test", action="store_true", help="Use test account credentials (ROOSTOO_TEST_*, default)")
     parser.add_argument("--dry-run", action="store_true", help="Do not place/cancel real orders")
     parser.add_argument("--tick-seconds", type=int, help="Seconds between ticks (overrides BOT_TICK_SECONDS)")
     parser.add_argument("--env-file", default=".env", help="Path to .env file (default: .env)")
@@ -42,6 +45,10 @@ def main() -> int:
     overrides = {}
     if args.strategy is not None:
         overrides["strategy_name"] = args.strategy
+    if args.live:
+        overrides["live"] = True
+    if args.test:
+        overrides["live"] = False
     if args.dry_run:
         overrides["dry_run"] = True
     if args.tick_seconds is not None:
