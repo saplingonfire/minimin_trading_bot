@@ -1,0 +1,58 @@
+# Roostoo Public API SDK (Python)
+
+Python client for the [Roostoo Public API (v3)](https://github.com/roostoo/Roostoo-API-Documents).
+
+## Install
+
+From this repo:
+
+```bash
+pip install -e .
+```
+
+## Configuration
+
+Set your API credentials (from [Roostoo](https://github.com/roostoo/Roostoo-API-Documents#public-apikey--secretkey)):
+
+- **Environment:** `ROOSTOO_API_KEY` and `ROOSTOO_SECRET_KEY`
+- **Or** pass them when creating the client:
+
+```python
+from roostoo import RoostooClient
+
+client = RoostooClient(
+    api_key="YOUR_API_KEY",
+    secret_key="YOUR_SECRET_KEY",
+    base_url="https://mock-api.roostoo.com",  # optional, this is the default
+)
+```
+
+## Usage
+
+```python
+from roostoo import RoostooClient, RoostooAPIError
+
+client = RoostooClient()
+
+# Public (no auth)
+print(client.get_server_time())
+print(client.get_exchange_info())
+
+# Ticker (timestamp only)
+print(client.get_ticker())
+print(client.get_ticker("BTC/USD"))
+
+# Signed (API key + HMAC)
+print(client.get_balance())
+print(client.get_pending_count())
+print(client.place_order("BNB/USD", "BUY", 1))  # MARKET
+print(client.place_order("BTC/USD", "BUY", 0.01, order_type="LIMIT", price=95000))
+print(client.query_order(pair="BTC/USD", pending_only=False))
+print(client.cancel_order(pair="BNB/USD"))
+```
+
+On HTTP or API errors (e.g. `Success: false`), the client raises `RoostooAPIError` with the message and optional `status_code`, `response_body`, and `raw` response.
+
+## API reference
+
+- [Roostoo Public API docs](https://github.com/roostoo/Roostoo-API-Documents)
