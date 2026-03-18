@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from bot.ohlcv import OHLCVProvider
+    from bot.price_store import PriceStore
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,8 @@ class TradingContext:
     pending_orders: list[dict[str, Any]]
     exchange_info: dict[str, Any] | None = None
     ohlcv_provider: OHLCVProvider | None = None
+    price_store: PriceStore | None = None
+    risk_force_cash: bool = False
 
 
 class Strategy(ABC):

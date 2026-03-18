@@ -6,6 +6,7 @@ from bot.base import TradingContext
 
 if TYPE_CHECKING:
     from bot.ohlcv import OHLCVProvider
+    from bot.price_store import PriceStore
     from roostoo.client import RoostooClient
 
 
@@ -14,6 +15,8 @@ def build_context(
     pair: str | None = None,
     exchange_info: dict[str, Any] | None = None,
     ohlcv_provider: "OHLCVProvider | None" = None,
+    price_store: "PriceStore | None" = None,
+    risk_force_cash: bool = False,
 ) -> TradingContext:
     """Fetch market data and account state, return a read-only TradingContext."""
     st = client.get_server_time()
@@ -41,4 +44,6 @@ def build_context(
         pending_orders=pending_orders,
         exchange_info=exchange_info,
         ohlcv_provider=ohlcv_provider,
+        price_store=price_store,
+        risk_force_cash=risk_force_cash,
     )
