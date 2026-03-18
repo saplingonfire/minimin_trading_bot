@@ -106,16 +106,22 @@ class Executor:
     def _execute_cancel(self, sig: CancelOrderSignal) -> dict[str, Any]:
         if self._dry_run:
             logger.info(
-                "dry_run cancel order_id=%s pair=%s",
-                sig.order_id,
-                sig.pair,
+                "cancel_result order_id=%s pair=%s success=true dry_run=true",
+                sig.order_id, sig.pair,
             )
             return {"dry_run": True, "cancel": True}
 
         def _do() -> dict[str, Any]:
             return self._client.cancel_order(order_id=sig.order_id, pair=sig.pair)
 
-        return self._request_with_retry(_do, "cancel")
+        out = self._request_with_retry(_do, "cancel")
+        success = "error" not in out
+        err = out.get("error", "") if not success else ""
+        logger.info(
+            "cancel_result order_id=%s pair=%s success=%s%s",
+            sig.order_id, sig.pair, success, f" error={err}" if err else "",
+        )
+        return out
 
     def _execute_place(
         self,
@@ -182,12 +188,8 @@ class Executor:
 
         if self._dry_run:
             logger.info(
-                "dry_run place pair=%s side=%s type=%s qty=%s price=%s",
-                pair,
-                sig.side,
-                sig.order_type,
-                qty,
-                price,
+                "order_result pair=%s side=%s qty=%s success=true dry_run=true",
+                pair, sig.side, qty,
             )
             return {"dry_run": True, "place": True}
 
@@ -200,7 +202,14 @@ class Executor:
                 price=price,
             )
 
-        return self._request_with_retry(_do, "place_order")
+        out = self._request_with_retry(_do, "place_order")
+        success = "error" not in out
+        err = out.get("error", "") if not success else ""
+        logger.info(
+            "order_result pair=%s side=%s qty=%s success=%s%s",
+            pair, sig.side, qty, success, f" error={err}" if err else "",
+        )
+        return out
 
     def _request_with_retry(
         self,
