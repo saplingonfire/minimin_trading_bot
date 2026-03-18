@@ -4,11 +4,32 @@ Python client for the [Roostoo Public API (v3)](https://github.com/roostoo/Roost
 
 ## Install
 
-From this repo:
+The project uses a **virtual environment in the repo** (`venv/`). All commands (run_bot, pytest, scripts) should be run with this venv activated.
+
+**One-time setup** (from repo root):
 
 ```bash
-pip install -e .
+# Create venv and install dependencies
+./scripts/setup_venv.sh          # macOS/Linux
+# or
+scripts\setup_venv.bat           # Windows
+
+# Activate the venv
+source venv/bin/activate         # macOS/Linux
+# or
+venv\Scripts\activate            # Windows
 ```
+
+**Manual setup** (if you prefer):
+
+```bash
+python3 -m venv venv
+source venv/bin/activate         # or venv\Scripts\activate on Windows
+pip install -e .
+pip install -r requirements.txt
+```
+
+The `venv/` directory is gitignored; each clone creates its own.
 
 ## Configuration
 
@@ -55,11 +76,9 @@ On HTTP or API errors (e.g. `Success: false`), the client raises `RoostooAPIErro
 
 ## Running the bot
 
-The repo includes a modular trading bot that uses the SDK. From the repo root:
+With the repo venv **activated** (see Install above):
 
 ```bash
-pip install -e .
-pip install -r requirements.txt
 cp .env.example .env
 # Edit .env: set ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY, BOT_STRATEGY
 python scripts/run_bot.py --strategy example [--dry-run]
@@ -67,19 +86,28 @@ python scripts/run_bot.py --strategy example [--dry-run]
 
 - **Strategies**: `example` (place a MARKET buy every N ticks for testing); `cross_sectional_momentum` (weekly rebalance, top N by 90d return, 200 MA filter); `momentum_20_50` (EMA 20/50 crossover, ATR trailing stop); `bollinger_rsi` (BB + RSI oversold, 4H regime filter). Add more under `bot/strategies/` and register in `bot/strategies/__init__.py`. Example params in `.env.example`.
 - **Config**: Env vars in `.env` or environment; see `.env.example`. CLI: `--strategy`, `--dry-run`, `--tick-seconds`, `--env-file`.
-- **Hackathon (AWS)**: Use `tmux` so the bot keeps running after you disconnect; see the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816).
+- **Hackathon (AWS)**: On the EC2 instance, create and activate the repo venv (`./scripts/setup_venv.sh` then `source venv/bin/activate`), then run the bot. Use `tmux` so the bot keeps running after you disconnect; see the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816).
 
 ### Historical data (OHLCV)
 
-Strategies that need candles (e.g. momentum, Bollinger/RSI) read from local CSV dumps. The bot does **not** download data at runtime.
+Strategies that need candles (e.g. momentum, Bollinger/RSI) read from local CSV dumps. The bot does **not** download data at runtime. Use the repo **venv** when running scripts.
 
 1. **Install the optional Binance sync dependency**: `pip install .[binance]` (or `pip install binance-historical-data`).
-2. **Sync data** (run manually or via cron):
+2. **Sync data** (run manually or via cron, with venv activated):
    ```bash
    python scripts/sync_binance_historical.py --data-dir data/binance --interval 1h --interval 4h
    ```
    Use `--tickers BTC,ETH,BNB` to limit pairs; see `--help` for options.
 3. **Point the bot at the dump directory**: set `BINANCE_DATA_DIR=data/binance` in `.env` (use the same path as `--data-dir`). The runner reads `BINANCE_DATA_DIR` and passes it to the OHLCV provider. If `BINANCE_DATA_DIR` is not set, `context.ohlcv_provider` is `None` and strategies that need OHLCV should no-op.
+
+## Tests
+
+With the repo **venv** activated:
+
+```bash
+pip install pytest   # if not already installed
+python -m pytest tests/ -v
+```
 
 ## API reference
 
