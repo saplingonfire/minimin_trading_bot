@@ -66,12 +66,14 @@ class Executor:
         exchange_info: dict[str, Any] | None = None,
         max_pending_orders: int | None = None,
         max_order_notional: float | None = None,
+        order_spacing_sec: float | None = None,
     ) -> None:
         self._client = client
         self._dry_run = dry_run
         self._exchange_info = exchange_info
         self._max_pending_orders = max_pending_orders
         self._max_order_notional = max_order_notional
+        self._order_spacing_sec = order_spacing_sec
 
     def execute(
         self,
@@ -81,6 +83,8 @@ class Executor:
         """Execute signals in order. Returns list of API responses or error stubs. Never logs secrets."""
         results: list[dict[str, Any]] = []
         ticker = context_ticker or {}
+        spacing = self._order_spacing_sec
+        place_count = 0
 
         for sig in signals:
             if isinstance(sig, CancelOrderSignal):
@@ -88,8 +92,12 @@ class Executor:
                 results.append(out)
                 continue
             if isinstance(sig, PlaceOrderSignal):
+                if spacing is not None and spacing > 0 and place_count >= 1 and not self._dry_run:
+                    time.sleep(spacing)
                 out = self._execute_place(sig, ticker, results)
                 results.append(out)
+                if "error" not in out:
+                    place_count += 1
                 continue
             results.append({"error": "unknown_signal_type"})
 
