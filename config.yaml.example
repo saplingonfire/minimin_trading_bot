@@ -3,32 +3,58 @@
 # Secrets: use ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY (or ROOSTOO_TEST_*).
 
 strategy:
+  # Number of top momentum coins to hold (inverse-vol weighted).
   N: 5
+  # BTC moving-average window (days) for regime filter; price > MA = risk-on.
   ma_window: 20
+  # Weights for composite momentum: [1d, 3d, 7d] return; higher weight on 7d.
   momentum_weights: [0.2, 0.3, 0.5]
+  # Target fraction of portfolio in crypto when risk-on (rest in cash).
   target_exposure: 0.85
+  # Maximum weight per single coin (cap concentration).
   max_weight_per_coin: 0.20
+  # Minimum notional (USD) per trade; smaller deltas are skipped.
   min_trade_usd: 50.0
+  # Minimum 24h USD volume for a pair to be eligible for ranking.
   min_volume_usd: 500000
+  # Minutes between cross-sectional re-ranks (throttles order flow).
   rank_interval_min: 60
+  # UTC hour (0–23) at which regime (BTC vs MA) is re-evaluated once per day.
   regime_utc_hour: 0
+  # Kill-switch / risk-off triggers (passed to runner where applicable).
   risk:
+    # Halt bot after this many consecutive API errors.
     max_consecutive_errors: 5
+    # Force risk-off (go to cash) if |BTC 24h change| > this fraction (e.g. 0.40 = 40%).
     btc_daily_move_kill: 0.40
 
+# Execution and tick pacing (maps into bot tick_seconds, order spacing).
 execution:
+  # Seconds between main bot ticks (how often strategy.next() runs).
   cycle_sec: 300
+  # Minutes between re-ranks; can mirror strategy.rank_interval_min.
   rank_interval_min: 60
+  # Max market orders per tick (keeps under API rate limits).
   max_orders_per_cycle: 2
+  # Seconds to wait between placing orders within a cycle.
   order_spacing_sec: 65
 
+# Global risk / kill-switch settings (used by runner).
 risk:
+  # Drawdown from peak at which to reduce exposure (e.g. -0.05 = 5%).
   max_drawdown_soft: -0.05
+  # Drawdown from peak at which to force full cash.
   max_drawdown_hard: -0.15
+  # Force risk-off if |BTC 24h change| exceeds this (e.g. 0.40 = 40%).
   btc_daily_move_kill: 0.40
+  # Halt bot after this many consecutive API errors.
   max_consecutive_errors: 5
 
+# Data and persistence.
 data:
+  # SQLite path for price store (ticker snapshots for regime + momentum).
   db_path: ./prices.db
+  # Optional warmup source for initial BTC history (e.g. binance).
   warmup_source: binance
+  # Directory for log files (if used by runner).
   log_dir: ./logs/
