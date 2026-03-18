@@ -3,6 +3,7 @@
 from bot.strategies.bollinger_rsi import BollingerRSIStrategy
 from bot.strategies.cross_sectional_momentum import CrossSectionalMomentumStrategy
 from bot.strategies.example import ExampleStrategy
+from bot.strategies.hybrid_trend_cross_sectional import HybridTrendCrossSectionalStrategy
 from bot.strategies.momentum_20_50 import Momentum20_50Strategy
 
 STRATEGIES: dict[str, type] = {
@@ -10,6 +11,7 @@ STRATEGIES: dict[str, type] = {
     "cross_sectional_momentum": CrossSectionalMomentumStrategy,
     "momentum_20_50": Momentum20_50Strategy,
     "bollinger_rsi": BollingerRSIStrategy,
+    "hybrid_trend_cross_sectional": HybridTrendCrossSectionalStrategy,
 }
 
 
