@@ -1,3 +1,4 @@
 # Roostoo SDK + bot (run from repo root: python scripts/run_bot.py)
 requests>=2.28
 python-dotenv>=1.0
+PyYAML>=6.0

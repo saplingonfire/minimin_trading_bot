@@ -1,8 +1,9 @@
-"""Centralized config: env vars + CLI overrides, validation, BotSettings."""
+"""Centralized config: env vars + optional YAML + CLI overrides, validation, BotSettings."""
 
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -21,6 +22,10 @@ class BotSettings:
     cancel_orders_on_stop: bool
     max_pending_orders: int | None
     max_order_notional: float | None
+    # Hybrid / execution pacing (optional)
+    price_store_path: str | None = None
+    max_orders_per_cycle: int | None = None
+    order_spacing_sec: float | None = None
 
 
 def _parse_bool(s: str | None) -> bool:
@@ -47,9 +52,38 @@ def _parse_float(s: str | None) -> float | None:
         return None
 
 
+def _load_config_yaml(path: str | Path = "config.yaml") -> dict[str, Any]:
+    """Load optional config.yaml; return empty dict if missing or invalid."""
+    try:
+        import yaml
+    except ImportError:
+        return {}
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        return {}
+    try:
+        with p.open() as f:
+            data = yaml.safe_load(f)
+        return data or {}
+    except Exception:
+        return {}
+
+
 def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
-    """Load settings from env, apply CLI overrides, validate. Never log secrets."""
-    overrides = cli_overrides or {}
+    """Load settings from env, optional config.yaml, and CLI overrides. Validate. Never log secrets."""
+    overrides = dict(cli_overrides) if cli_overrides else {}
+    yaml_config = _load_config_yaml(os.environ.get("BOT_CONFIG_PATH", "config.yaml"))
+    yaml_strategy: dict[str, Any] = {}
+    if yaml_config:
+        yaml_strategy = yaml_config.get("strategy") or {}
+        execution_yaml = yaml_config.get("execution") or {}
+        data_yaml = yaml_config.get("data") or {}
+        if execution_yaml:
+            overrides.setdefault("tick_seconds", execution_yaml.get("cycle_sec"))
+            overrides.setdefault("max_orders_per_cycle", execution_yaml.get("max_orders_per_cycle"))
+            overrides.setdefault("order_spacing_sec", execution_yaml.get("order_spacing_sec"))
+        if data_yaml:
+            overrides.setdefault("price_store_path", data_yaml.get("db_path"))
 
     live = overrides.get("live")
     if live is None:
@@ -78,14 +112,15 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
 
     params_raw = overrides.get("strategy_params") or os.environ.get("BOT_STRATEGY_PARAMS", "{}")
     if isinstance(params_raw, dict):
-        strategy_params = params_raw
+        from_env = params_raw
     else:
         try:
-            strategy_params = json.loads(params_raw) if params_raw else {}
+            from_env = json.loads(params_raw) if params_raw else {}
         except json.JSONDecodeError as e:
             raise ValueError(f"BOT_STRATEGY_PARAMS must be valid JSON: {e}") from e
-    if not isinstance(strategy_params, dict):
+    if not isinstance(from_env, dict):
         raise ValueError("BOT_STRATEGY_PARAMS must be a JSON object")
+    strategy_params = {**yaml_strategy, **from_env}
 
     tick_seconds = overrides.get("tick_seconds")
     if tick_seconds is None:
@@ -109,6 +144,17 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
     if max_notional is None:
         max_notional = _parse_float(os.environ.get("BOT_MAX_ORDER_NOTIONAL"))
 
+    price_store_path = overrides.get("price_store_path")
+    if price_store_path is None:
+        price_store_path = os.environ.get("BOT_PRICE_STORE_PATH", "").strip() or None
+    max_orders_per_cycle = overrides.get("max_orders_per_cycle")
+    if max_orders_per_cycle is None:
+        raw = os.environ.get("BOT_MAX_ORDERS_PER_CYCLE", "").strip()
+        max_orders_per_cycle = int(raw) if raw.isdigit() else None
+    order_spacing_sec = overrides.get("order_spacing_sec")
+    if order_spacing_sec is None:
+        order_spacing_sec = _parse_float(os.environ.get("BOT_ORDER_SPACING_SEC"))
+
     if not api_key or not secret_key:
         which = "live (ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY)" if live else "test (ROOSTOO_TEST_API_KEY, ROOSTOO_TEST_SECRET_KEY)"
         raise ValueError(f"Credentials are required for {which}; set in env or .env")
@@ -125,4 +171,7 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
         cancel_orders_on_stop=cancel_orders_on_stop,
         max_pending_orders=max_pending,
         max_order_notional=max_notional,
+        price_store_path=price_store_path,
+        max_orders_per_cycle=max_orders_per_cycle,
+        order_spacing_sec=order_spacing_sec,
     )
