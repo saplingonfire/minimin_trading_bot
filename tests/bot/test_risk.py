@@ -1,5 +1,7 @@
 """Tests for bot/risk: drawdown ladder and kill switch."""
 
+import time
+
 import pytest
 
 from bot.risk import (
@@ -46,12 +48,15 @@ def test_kill_switch_consecutive_errors() -> None:
 
 
 def test_kill_switch_btc_move_force_cash_only() -> None:
-    halt, force = kill_switch_check(0, int(1e12), 0.50, btc_daily_move_kill=0.40)
+    # Use current time so clock-drift check does not trigger (server_time_ms=1e12 would fail drift).
+    now_ms = int(time.time() * 1000)
+    halt, force = kill_switch_check(0, now_ms, 0.50, btc_daily_move_kill=0.40)
     assert halt is False
     assert force is True
 
 
 def test_kill_switch_no_trigger() -> None:
-    halt, force = kill_switch_check(0, int(1e12), 0.10, btc_daily_move_kill=0.40)
+    now_ms = int(time.time() * 1000)
+    halt, force = kill_switch_check(0, now_ms, 0.10, btc_daily_move_kill=0.40)
     assert halt is False
     assert force is False
