@@ -107,13 +107,13 @@ class PriceStore:
         symbol = _normalize_pair(symbol)
         if not symbol or limit_days <= 0:
             return []
-        with self._conn() as c:
-            # Get all rows for symbol, order by ts
-            c.execute(
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 "SELECT ts_utc_ms, last_price FROM price_snapshots WHERE symbol = ? ORDER BY ts_utc_ms",
                 (symbol,),
             )
-            rows = c.fetchall()
+            rows = cur.fetchall()
         if not rows:
             return []
         # Group by UTC day (ms // MS_PER_DAY), take last price per day
@@ -130,17 +130,20 @@ class PriceStore:
         symbol = _normalize_pair(symbol)
         if not symbol:
             return 0
-        with self._conn() as c:
-            c.execute(
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 "SELECT COUNT(DISTINCT (ts_utc_ms / ?)) FROM price_snapshots WHERE symbol = ?",
                 (MS_PER_DAY, symbol),
             )
-            return int(c.fetchone()[0] or 0)
+            row = cur.fetchone()
+            return int(row[0] or 0) if row else 0
 
     def symbols_with_at_least_n_days(self, min_days: int) -> list[str]:
         """Return list of symbols that have at least min_days of daily data."""
-        with self._conn() as c:
-            c.execute(
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
                 """
                 SELECT symbol FROM price_snapshots
                 GROUP BY symbol
@@ -148,19 +151,23 @@ class PriceStore:
                 """,
                 (MS_PER_DAY, min_days),
             )
-            return [row[0] for row in c.fetchall()]
+            return [row[0] for row in cur.fetchall()]
 
     def insert_daily_rows(self, rows: list[tuple[str, int, float]]) -> int:
         """Bulk insert (symbol, ts_utc_ms, last_price). Used by Binance warmup. Returns count inserted."""
         if not rows:
             return 0
-        with self._conn() as c:
-            c.executemany(
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.executemany(
                 "INSERT INTO price_snapshots (ts_utc_ms, symbol, last_price, volume_24h_usd, change_24h) VALUES (?, ?, ?, 0.0, 0.0)",
-                [(sym, ts, price) for sym, ts, price in rows],
+                [(ts, sym, price) for sym, ts, price in rows],
             )
-            c.commit()
-        return len(rows)
+            conn.commit()
+            return len(rows)
+        finally:
+            conn.close()
 
 
 def build_daily_bars_from_closes(closes: list[float]) -> list[dict[str, Any]]:
