@@ -8,42 +8,11 @@ from typing import Any
 from bot.base import PlaceOrderSignal, Signal, Strategy, TradingContext
 from bot.indicators import sma
 from bot.ohlcv import OHLCVUnavailableError
+from bot.strategies.utils import get_balance_free, get_price, parse_pair, tradeable_pairs
 
 logger = logging.getLogger(__name__)
 
 REBALANCE_MS = 7 * 24 * 3600 * 1000
-
-
-def _tradeable_pairs(exchange_info: dict[str, Any] | None) -> list[str]:
-    pairs = exchange_info.get("TradePairs") or exchange_info.get("trade_pairs") or {}
-    out: list[str] = []
-    for k, v in pairs.items():
-        if isinstance(v, dict) and v.get("CanTrade", v.get("can_trade", True)) is False:
-            continue
-        pair = k if "/" in k else f"{k}/USD"
-        out.append(pair)
-    return out
-
-
-def _get_price(ticker: dict[str, Any], pair: str) -> float:
-    row = ticker.get(pair) or ticker
-    if not isinstance(row, dict):
-        return 0.0
-    return float(row.get("LastPrice", row.get("lastPrice", 0)) or 0)
-
-
-def _get_balance_free(balance: dict[str, Any], asset: str) -> float:
-    entry = balance.get(asset) or balance.get(asset.upper())
-    if not isinstance(entry, dict):
-        return 0.0
-    return float(entry.get("Free", entry.get("free", 0)) or 0)
-
-
-def _parse_pair(pair: str) -> tuple[str, str]:
-    if "/" in pair:
-        a, b = pair.strip().upper().split("/", 1)
-        return (a.strip(), b.strip())
-    return (pair.strip().upper(), "USD")
 
 
 class CrossSectionalMomentumStrategy(Strategy):
@@ -69,7 +38,7 @@ class CrossSectionalMomentumStrategy(Strategy):
         if self._last_rebalance_ms is not None and now - self._last_rebalance_ms < REBALANCE_MS:
             return []
 
-        pairs = _tradeable_pairs(context.exchange_info)
+        pairs = tradeable_pairs(context.exchange_info)
         if not pairs:
             return []
 
@@ -112,22 +81,22 @@ class CrossSectionalMomentumStrategy(Strategy):
             for p in weights:
                 weights[p] /= total_w
 
-        quote_balance = _get_balance_free(context.balance, "USD") + _get_balance_free(context.balance, "USDT")
+        quote_balance = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
         portfolio_value = quote_balance
         for pair in pairs:
-            base, _ = _parse_pair(pair)
-            qty = _get_balance_free(context.balance, base)
-            price = _get_price(context.ticker, pair)
+            base, _ = parse_pair(pair)
+            qty = get_balance_free(context.balance, base)
+            price = get_price(context.ticker, pair)
             if price > 0:
                 portfolio_value += qty * price
 
         signals: list[Signal] = []
         for pair in leaders:
-            base, quote = _parse_pair(pair)
-            price = _get_price(context.ticker, pair)
+            base, quote = parse_pair(pair)
+            price = get_price(context.ticker, pair)
             if price <= 0:
                 continue
-            current_value = _get_balance_free(context.balance, base) * price
+            current_value = get_balance_free(context.balance, base) * price
             target_value = portfolio_value * weights.get(pair, 0)
             diff = target_value - current_value
             if abs(diff) < price * 0.001:
@@ -139,7 +108,7 @@ class CrossSectionalMomentumStrategy(Strategy):
                     signals.append(PlaceOrderSignal(pair, "BUY", spend / price, "MARKET", None))
                     quote_balance -= spend
             else:
-                to_sell = min(qty, _get_balance_free(context.balance, base))
+                to_sell = min(qty, get_balance_free(context.balance, base))
                 if to_sell > 0:
                     signals.append(PlaceOrderSignal(pair, "SELL", to_sell, "MARKET", None))
 

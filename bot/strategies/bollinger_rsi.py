@@ -8,29 +8,9 @@ from typing import Any
 from bot.base import PlaceOrderSignal, Signal, Strategy, TradingContext
 from bot.indicators import atr, bollinger_bands, rsi, sma
 from bot.ohlcv import OHLCVUnavailableError
+from bot.strategies.utils import get_balance_free, get_price, parse_pair
 
 logger = logging.getLogger(__name__)
-
-
-def _get_balance_free(balance: dict[str, Any], asset: str) -> float:
-    entry = balance.get(asset) or balance.get(asset.upper())
-    if not isinstance(entry, dict):
-        return 0.0
-    return float(entry.get("Free", entry.get("free", 0)) or 0)
-
-
-def _get_price(ticker: dict[str, Any], pair: str) -> float | None:
-    row = ticker.get(pair) or ticker
-    if not isinstance(row, dict):
-        return None
-    return float(row.get("LastPrice", row.get("lastPrice", 0)) or 0) or None
-
-
-def _parse_pair(pair: str) -> tuple[str, str]:
-    if "/" in pair:
-        a, b = pair.strip().upper().split("/", 1)
-        return (a.strip(), b.strip())
-    return (pair.strip().upper(), "USD")
 
 
 class BollingerRSIStrategy(Strategy):
@@ -89,15 +69,15 @@ class BollingerRSIStrategy(Strategy):
         if not mid or not lower or not rsi_series or not atr_series:
             return []
 
-        price = _get_price(context.ticker, self._pair)
-        if price is None or price <= 0:
+        price = get_price(context.ticker, self._pair)
+        if price <= 0:
             return []
 
         cur_lower = lower[-1]
         cur_rsi = rsi_series[-1]
         cur_atr = atr_series[-1]
-        base, quote = _parse_pair(self._pair)
-        base_held = _get_balance_free(context.balance, base)
+        base, quote = parse_pair(self._pair)
+        base_held = get_balance_free(context.balance, base)
         if base_held > 0:
             self._in_position = True
 

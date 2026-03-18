@@ -10,59 +10,19 @@ from bot.base import PlaceOrderSignal, Signal, Strategy, TradingContext
 from bot.price_store import BTC_PAIR, MS_PER_DAY
 from bot.regime import REGIME_RISK_OFF, REGIME_RISK_ON, compute_regime
 from bot.risk import get_drawdown_exposure, should_restore_exposure
+from bot.strategies.utils import (
+    get_balance_free,
+    get_change_pct,
+    get_price,
+    get_volume_usd,
+    parse_pair,
+    tradeable_pairs,
+)
 
 logger = logging.getLogger(__name__)
 
 # Minimum days of history for momentum (r7 needs 7+1 closes)
 MIN_DAYS_FOR_MOMENTUM = 8
-
-
-def _tradeable_pairs(exchange_info: dict[str, Any] | None) -> list[str]:
-    if not exchange_info:
-        return []
-    pairs = exchange_info.get("TradePairs") or exchange_info.get("trade_pairs") or {}
-    out: list[str] = []
-    for k, v in pairs.items():
-        if isinstance(v, dict) and v.get("CanTrade", v.get("can_trade", True)) is False:
-            continue
-        pair = k if "/" in str(k) else f"{str(k)}/USD"
-        out.append(pair)
-    return out
-
-
-def _get_price(ticker: dict[str, Any], pair: str) -> float:
-    row = ticker.get(pair) or ticker
-    if not isinstance(row, dict):
-        return 0.0
-    return float(row.get("LastPrice", row.get("lastPrice", 0)) or 0)
-
-
-def _get_volume_usd(ticker: dict[str, Any], pair: str) -> float:
-    row = ticker.get(pair) or ticker
-    if not isinstance(row, dict):
-        return 0.0
-    return float(row.get("UnitTradeValue", row.get("unit_trade_value", 0)) or 0)
-
-
-def _get_change_pct(ticker: dict[str, Any], pair: str) -> float:
-    row = ticker.get(pair) or ticker
-    if not isinstance(row, dict):
-        return 0.0
-    return float(row.get("Change", row.get("change", 0)) or 0)
-
-
-def _get_balance_free(balance: dict[str, Any], asset: str) -> float:
-    entry = balance.get(asset) or balance.get(asset.upper())
-    if not isinstance(entry, dict):
-        return 0.0
-    return float(entry.get("Free", entry.get("free", 0)) or 0)
-
-
-def _parse_pair(pair: str) -> tuple[str, str]:
-    if "/" in pair:
-        a, b = pair.strip().upper().split("/", 1)
-        return (a.strip(), b.strip())
-    return (pair.strip().upper(), "USD")
 
 
 def _momentum_score(r1: float, r3: float, r7: float, w1: float, w3: float, w7: float) -> float:
@@ -150,16 +110,16 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         store = context.price_store
         if not store or not context.exchange_info:
             return []
-        pairs = _tradeable_pairs(context.exchange_info)
+        pairs = tradeable_pairs(context.exchange_info)
         w1, w3, w7 = self._momentum_weights[0], self._momentum_weights[1], self._momentum_weights[2]
         scored: list[tuple[str, float, float]] = []
         for pair in pairs:
             if store.count_days_with_data(pair) < self._min_days_history:
                 continue
-            vol_usd = _get_volume_usd(context.ticker, pair)
+            vol_usd = get_volume_usd(context.ticker, pair)
             if vol_usd < self._min_volume_usd:
                 continue
-            ch = _get_change_pct(context.ticker, pair)
+            ch = get_change_pct(context.ticker, pair)
             if abs(ch) > 0.50:
                 continue
             closes = store.get_daily_closes(pair, MIN_DAYS_FOR_MOMENTUM)
@@ -200,11 +160,11 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         return weights
 
     def _portfolio_value(self, context: TradingContext, pairs: list[str]) -> float:
-        pv = _get_balance_free(context.balance, "USD") + _get_balance_free(context.balance, "USDT")
+        pv = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
         for pair in pairs:
-            base, _ = _parse_pair(pair)
-            qty = _get_balance_free(context.balance, base)
-            price = _get_price(context.ticker, pair)
+            base, _ = parse_pair(pair)
+            qty = get_balance_free(context.balance, base)
+            price = get_price(context.ticker, pair)
             if price > 0:
                 pv += qty * price
         return pv
@@ -218,7 +178,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             self._target_weights = {}
             return []
 
-        pairs = _tradeable_pairs(context.exchange_info)
+        pairs = tradeable_pairs(context.exchange_info)
         portfolio_value = self._portfolio_value(context, pairs)
         if portfolio_value > self._portfolio_peak:
             self._portfolio_peak = portfolio_value
@@ -250,11 +210,11 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         sell_signals: list[Signal] = []
         buy_signals: list[Signal] = []
         for pair in self._target_weights:
-            base, _ = _parse_pair(pair)
-            price = _get_price(context.ticker, pair)
+            base, _ = parse_pair(pair)
+            price = get_price(context.ticker, pair)
             if price <= 0:
                 continue
-            current_qty = _get_balance_free(context.balance, base)
+            current_qty = get_balance_free(context.balance, base)
             current_value = current_qty * price
             target = target_usd.get(pair, 0.0)
             delta_usd = target - current_value
@@ -266,7 +226,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
                 if to_sell > 0:
                     sell_signals.append(PlaceOrderSignal(pair, "SELL", to_sell, "MARKET", None))
             else:
-                quote_free = _get_balance_free(context.balance, "USD") + _get_balance_free(context.balance, "USDT")
+                quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
                 spend = min(delta_usd, quote_free)
                 if spend >= self._min_trade_usd and spend > 0:
                     buy_signals.append(PlaceOrderSignal(pair, "BUY", spend / price, "MARKET", None))

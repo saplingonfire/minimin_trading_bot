@@ -8,30 +8,9 @@ from typing import Any
 from bot.base import PlaceOrderSignal, Signal, Strategy, TradingContext
 from bot.indicators import atr, ema
 from bot.ohlcv import OHLCVUnavailableError
+from bot.strategies.utils import get_balance_free, get_price, parse_pair
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_pair(pair: str) -> tuple[str, str]:
-    if "/" in pair:
-        a, b = pair.strip().upper().split("/", 1)
-        return (a.strip(), b.strip())
-    return (pair.strip().upper(), "USD")
-
-
-def _get_balance_free(balance: dict[str, Any], asset: str) -> float:
-    """Return Free amount for asset. balance is dict of asset -> {Free, Lock}."""
-    entry = balance.get(asset) or balance.get(asset.upper())
-    if not isinstance(entry, dict):
-        return 0.0
-    return float(entry.get("Free", entry.get("free", 0)) or 0)
-
-
-def _get_price(ticker: dict[str, Any], pair: str) -> float | None:
-    row = ticker.get(pair) or ticker
-    if not isinstance(row, dict):
-        return None
-    return float(row.get("LastPrice", row.get("lastPrice", 0)) or 0) or None
 
 
 class Momentum20_50Strategy(Strategy):
@@ -81,13 +60,13 @@ class Momentum20_50Strategy(Strategy):
         cur_ema_fast = ema_fast_series[-1]
         cur_ema_slow = ema_slow_series[-1]
         cur_atr = atr_series[-1]
-        price = _get_price(context.ticker, self._pair)
-        if price is None or price <= 0:
+        price = get_price(context.ticker, self._pair)
+        if price <= 0:
             return []
 
-        base, quote = _parse_pair(self._pair)
-        quote_free = _get_balance_free(context.balance, quote)
-        base_held = _get_balance_free(context.balance, base)
+        base, quote = parse_pair(self._pair)
+        quote_free = get_balance_free(context.balance, quote)
+        base_held = get_balance_free(context.balance, base)
 
         if base_held > 0 and not self._in_position:
             self._in_position = True
