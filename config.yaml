@@ -1,0 +1,29 @@
+# Config for hybrid_trend_cross_sectional strategy.
+# Set BOT_STRATEGY=hybrid_trend_cross_sectional in .env. Secrets stay in .env.
+
+strategy:
+  N: 5
+  ma_window: 20
+  momentum_weights: [0.2, 0.3, 0.5]
+  target_exposure: 0.85
+  max_weight_per_coin: 0.20
+  min_trade_usd: 50.0
+  min_volume_usd: 500000
+  min_days_history: 3
+  rank_interval_min: 60
+  regime_utc_hour: 0
+  max_orders_per_cycle: 2
+  order_spacing_sec: 65
+  db_path: ./prices.db
+  risk:
+    max_consecutive_errors: 5
+    btc_daily_move_kill: 0.40
+
+execution:
+  cycle_sec: 300
+  max_orders_per_cycle: 2
+  order_spacing_sec: 65
+
+data:
+  db_path: ./prices.db
+  log_dir: ./logs/
