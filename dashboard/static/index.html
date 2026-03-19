@@ -100,7 +100,6 @@
   <div class="bar">
     <span id="status" class="status">Loading…</span>
     <button id="refresh" type="button">Refresh</button>
-    <span id="auto-refresh" class="status" style="margin-left: auto;"></span>
   </div>
 
   <div class="grid">
@@ -151,7 +150,6 @@
 
   <script>
     const API = '/api';
-    const REFRESH_INTERVAL_MS = 45000;
 
     function setStatus(text, ok) {
       const el = document.getElementById('status');
@@ -324,23 +322,8 @@
       document.getElementById('refresh').disabled = false;
     }
 
-    let refreshTimer;
-    function scheduleRefresh() {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      document.getElementById('auto-refresh').textContent = 'Next refresh in ' + (REFRESH_INTERVAL_MS / 1000) + 's';
-      let left = REFRESH_INTERVAL_MS / 1000;
-      const iv = setInterval(() => {
-        left--;
-        const el = document.getElementById('auto-refresh');
-        if (el) el.textContent = left > 0 ? 'Next refresh in ' + left + 's' : 'Refreshing…';
-        if (left <= 0) clearInterval(iv);
-      }, 1000);
-      refreshTimer = setTimeout(() => { refresh(); scheduleRefresh(); }, REFRESH_INTERVAL_MS);
-    }
-
-    document.getElementById('refresh').addEventListener('click', () => { refresh(); scheduleRefresh(); });
+    document.getElementById('refresh').addEventListener('click', refresh);
     refresh();
-    scheduleRefresh();
   </script>
 </body>
 </html>
