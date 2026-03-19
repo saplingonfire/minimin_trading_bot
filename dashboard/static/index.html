@@ -205,13 +205,17 @@
       setCardError('balance', null);
       try {
         const data = await fetchApi('/balance');
-        const wallet = data.Wallet ?? data.wallet ?? data.CurrBal ?? data;
+        const spot = data.SpotWallet && typeof data.SpotWallet === 'object' ? data.SpotWallet : null;
+        const margin = data.MarginWallet && typeof data.MarginWallet === 'object' ? data.MarginWallet : null;
+        const legacy = data.Wallet ?? data.wallet ?? data.CurrBal;
+        const wallet = (typeof legacy === 'object' && legacy !== null) ? legacy : (spot ?? margin ?? data);
         if (typeof wallet !== 'object' || wallet === null) {
           document.getElementById('balance').textContent = '—';
           document.getElementById('balance-list').innerHTML = '';
           return true;
         }
-        const entries = Object.entries(wallet).filter(([, v]) => v && typeof v === 'object');
+        const combined = spot && margin ? { ...spot, ...margin } : wallet;
+        const entries = Object.entries(combined).filter(([, v]) => v && typeof v === 'object');
         let usd = 0;
         entries.forEach(([asset, v]) => {
           const free = Number(v.Free ?? v.free ?? 0) || 0;
@@ -243,7 +247,7 @@
       setCardError('pending', null);
       try {
         const data = await fetchApi('/pending_count');
-        const n = data.PendingCount ?? data.pending_count ?? data.count ?? data;
+        const n = data.PendingCount ?? data.pending_count ?? data.TotalPending ?? data.total_pending ?? data.count ?? data;
         document.getElementById('pending').textContent = typeof n === 'number' ? n : (n != null ? String(n) : '—');
         return true;
       } catch (e) {
@@ -258,7 +262,8 @@
     async function loadTicker() {
       try {
         const data = await fetchApi('/ticker?pair=BTC/USD');
-        const ticker = data['BTC/USD'] ?? data.BTCUSD ?? data;
+        const dataPayload = data.Data && typeof data.Data === 'object' ? data.Data : data;
+        const ticker = dataPayload['BTC/USD'] ?? dataPayload.BTCUSD ?? data['BTC/USD'] ?? data.BTCUSD ?? data;
         const price = ticker?.LastPrice ?? ticker?.lastPrice ?? ticker?.Last;
         const change = ticker?.Change ?? ticker?.change;
         let html = price != null ? 'USD ' + Number(price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
@@ -279,7 +284,7 @@
       document.getElementById('orders-err').hidden = true;
       try {
         const data = await fetchApi('/orders?limit=50');
-        const orders = data.Orders ?? data.orders ?? data.Data ?? data.List ?? (Array.isArray(data) ? data : []);
+        const orders = data.OrderMatched ?? data.Orders ?? data.orders ?? data.Data ?? data.List ?? (Array.isArray(data) ? data : []);
         const rows = Array.isArray(orders) ? orders : [];
         const tbody = document.getElementById('orders-body');
         if (rows.length === 0) {
