@@ -105,7 +105,8 @@
   <div class="grid">
     <div class="card" id="card-balance">
       <h2>Balance</h2>
-      <div id="balance" class="value">—</div>
+      <div id="portfolio-value" class="value">—</div>
+      <div id="balance" class="value" style="font-size: 0.875rem; color: var(--muted); margin-top: 0.25rem;">—</div>
       <ul id="balance-list" class="balance-list" aria-label="Balance by asset"></ul>
       <div id="balance-err" class="err-msg" hidden></div>
     </div>
@@ -200,29 +201,50 @@
       }
     }
 
-    async function loadBalance() {
+    function getPriceFromTicker(tickerData, pair) {
+      const payload = tickerData.Data && typeof tickerData.Data === 'object' ? tickerData.Data : tickerData;
+      const row = payload[pair] ?? payload[pair?.replace('/', '')];
+      if (!row || typeof row !== 'object') return null;
+      return Number(row.LastPrice ?? row.lastPrice ?? row.Last) || null;
+    }
+
+    async function loadBalanceAndTicker() {
       setCardLoading('balance', true);
       setCardError('balance', null);
       try {
-        const data = await fetchApi('/balance');
-        const spot = data.SpotWallet && typeof data.SpotWallet === 'object' ? data.SpotWallet : null;
-        const margin = data.MarginWallet && typeof data.MarginWallet === 'object' ? data.MarginWallet : null;
-        const legacy = data.Wallet ?? data.wallet ?? data.CurrBal;
-        const wallet = (typeof legacy === 'object' && legacy !== null) ? legacy : (spot ?? margin ?? data);
+        const [balanceData, tickerData] = await Promise.all([
+          fetchApi('/balance'),
+          fetchApi('/ticker'),
+        ]);
+        const spot = balanceData.SpotWallet && typeof balanceData.SpotWallet === 'object' ? balanceData.SpotWallet : null;
+        const margin = balanceData.MarginWallet && typeof balanceData.MarginWallet === 'object' ? balanceData.MarginWallet : null;
+        const legacy = balanceData.Wallet ?? balanceData.wallet ?? balanceData.CurrBal;
+        const wallet = (typeof legacy === 'object' && legacy !== null) ? legacy : (spot ?? margin ?? balanceData);
         if (typeof wallet !== 'object' || wallet === null) {
+          document.getElementById('portfolio-value').textContent = '—';
           document.getElementById('balance').textContent = '—';
           document.getElementById('balance-list').innerHTML = '';
           return true;
         }
         const combined = spot && margin ? { ...spot, ...margin } : wallet;
         const entries = Object.entries(combined).filter(([, v]) => v && typeof v === 'object');
-        let usd = 0;
+        let cashUsd = 0;
+        let portfolioValue = 0;
         entries.forEach(([asset, v]) => {
           const free = Number(v.Free ?? v.free ?? 0) || 0;
           const lock = Number(v.Lock ?? v.lock ?? 0) || 0;
-          if (asset === 'USD' || asset === 'USDT') usd += free + lock;
+          const total = free + lock;
+          if (asset === 'USD' || asset === 'USDT') {
+            cashUsd += total;
+            portfolioValue += total;
+          } else {
+            const pair = asset + '/USD';
+            const price = getPriceFromTicker(tickerData, pair);
+            if (price > 0) portfolioValue += total * price;
+          }
         });
-        document.getElementById('balance').textContent = 'USD ' + (usd > 0 ? usd.toFixed(2) : '—');
+        document.getElementById('portfolio-value').textContent = 'Portfolio value: USD ' + (portfolioValue > 0 ? portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—');
+        document.getElementById('balance').textContent = 'Cash (USD): ' + (cashUsd > 0 ? cashUsd.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—');
         const list = document.getElementById('balance-list');
         list.innerHTML = entries.map(([asset, v]) => {
           const free = Number(v.Free ?? v.free ?? 0) || 0;
@@ -231,10 +253,19 @@
           if (total === 0) return '';
           return `<li><span>${asset}</span><span>${total.toFixed(6)}</span></li>`;
         }).filter(Boolean).join('') || '<li class="empty">No balances</li>';
+        const dataPayload = tickerData.Data && typeof tickerData.Data === 'object' ? tickerData.Data : tickerData;
+        const btcTicker = dataPayload['BTC/USD'] ?? dataPayload.BTCUSD ?? tickerData['BTC/USD'] ?? tickerData.BTCUSD ?? tickerData;
+        const price = btcTicker?.LastPrice ?? btcTicker?.lastPrice ?? btcTicker?.Last;
+        const change = btcTicker?.Change ?? btcTicker?.change;
+        let tickerHtml = price != null ? 'USD ' + Number(price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
+        if (change != null && !isNaN(change)) tickerHtml += ' <span style="color: var(--muted);">(' + (Number(change) >= 0 ? '+' : '') + Number(change).toFixed(2) + '%)</span>';
+        document.getElementById('ticker').innerHTML = tickerHtml;
+        document.getElementById('ticker-err').hidden = true;
         return true;
       } catch (e) {
         setCardError('balance', e);
-        document.getElementById('balance').textContent = 'Error';
+        document.getElementById('portfolio-value').textContent = 'Error';
+        document.getElementById('balance').textContent = '—';
         document.getElementById('balance-list').innerHTML = '';
         return false;
       } finally {
@@ -256,27 +287,6 @@
         return false;
       } finally {
         setCardLoading('pending', false);
-      }
-    }
-
-    async function loadTicker() {
-      try {
-        const data = await fetchApi('/ticker?pair=BTC/USD');
-        const dataPayload = data.Data && typeof data.Data === 'object' ? data.Data : data;
-        const ticker = dataPayload['BTC/USD'] ?? dataPayload.BTCUSD ?? data['BTC/USD'] ?? data.BTCUSD ?? data;
-        const price = ticker?.LastPrice ?? ticker?.lastPrice ?? ticker?.Last;
-        const change = ticker?.Change ?? ticker?.change;
-        let html = price != null ? 'USD ' + Number(price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
-        if (change != null && !isNaN(change)) html += ' <span style="color: var(--muted);">(' + (Number(change) >= 0 ? '+' : '') + Number(change).toFixed(2) + '%)</span>';
-        document.getElementById('ticker').innerHTML = html;
-        document.getElementById('ticker-err').hidden = true;
-        return true;
-      } catch (e) {
-        document.getElementById('ticker').textContent = 'Error';
-        const errEl = document.getElementById('ticker-err');
-        errEl.hidden = false;
-        errEl.textContent = e.message || String(e);
-        return false;
       }
     }
 
@@ -315,11 +325,10 @@
     async function refresh() {
       document.getElementById('refresh').disabled = true;
       setStatus('Refreshing…', null);
-      const [t, b, p, tk, o] = await Promise.all([
+      const [t, b, p, o] = await Promise.all([
         loadServerTime(),
-        loadBalance(),
+        loadBalanceAndTicker(),
         loadPendingCount(),
-        loadTicker(),
         loadOrders(),
       ]);
       const ok = t && b && p;
