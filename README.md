@@ -104,15 +104,15 @@ cp .env.example .env
 python scripts/run_bot.py --strategy example [--dry-run]
 ```
 
-- **Strategies**: `example` (place a MARKET buy every N ticks for testing); `hybrid_trend_cross_sectional` (recommended for competition: BTC MA20 regime + cross-sectional momentum, inverse-vol top-N); `cross_sectional_momentum` (weekly rebalance, top N by 90d return, 200 MA filter); `momentum_20_50` (EMA 20/50 crossover, ATR trailing stop); `bollinger_rsi` (BB + RSI oversold, 4H regime filter). Add more under `bot/strategies/` and register in `bot/strategies/__init__.py`. Example params in `.env.example`.
+- **Strategies**: `example` (place a MARKET buy every N ticks for testing); `hybrid_trend_cross_sectional` (recommended for competition: BTC MA20 regime + cross-sectional momentum, inverse-vol top-N); `hybrid_trend_cross_sectional_throttled` (same but three-tier regime: prelim uses 30–40% exposure when BTC is slightly below MA20, 0% only after 2 consecutive daily closes below MA20); `cross_sectional_momentum` (weekly rebalance, top N by 90d return, 200 MA filter); `momentum_20_50` (EMA 20/50 crossover, ATR trailing stop); `bollinger_rsi` (BB + RSI oversold, 4H regime filter). Add more under `bot/strategies/` and register in `bot/strategies/__init__.py`. Example params in `.env.example`.
 - **Config**: Env vars in `.env` or environment; see `.env.example`. CLI: `--strategy`, `--dry-run`, `--tick-seconds`, `--env-file`.
 - **Hackathon (AWS)**: On the EC2 instance, create and activate the repo venv (`./scripts/setup_venv.sh` then `source venv/bin/activate`), then run the bot. Use `tmux` so the bot keeps running after you disconnect; see the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816).
 
 ### Competition deployment (SG vs HK Quant Hackathon)
 
-For the [Roostoo SG vs HK University Web3 Quant Hackathon](https://roostoo.notion.site/Problem-Statement-SG-vs-HK-University-Web3-Quant-Hackathon-309ba22fed7980a79da6d8a08b5216c9), use the **hybrid_trend_cross_sectional** strategy so the bot runs with Roostoo data only (no ongoing external OHLCV):
+For the [Roostoo SG vs HK University Web3 Quant Hackathon](https://roostoo.notion.site/Problem-Statement-SG-vs-HK-University-Web3-Quant-Hackathon-309ba22fed7980a79da6d8a08b5216c9), use **hybrid_trend_cross_sectional** or **hybrid_trend_cross_sectional_throttled** so the bot runs with Roostoo data only (no ongoing external OHLCV). The throttled strategy is suited to the preliminary round: it keeps 30–40% exposure when BTC is slightly below MA20 and goes to 0% only after 2 consecutive daily closes below MA20 (set `regime.prelim_mode: true` in config).
 
-- Set `BOT_STRATEGY=hybrid_trend_cross_sectional`.
+- Set `BOT_STRATEGY=hybrid_trend_cross_sectional` or `BOT_STRATEGY=hybrid_trend_cross_sectional_throttled`.
 - Set `BOT_PRICE_STORE_PATH` (or `price_store_path` in config) to a path for the price DB (e.g. `prices.db`). The bot needs ~20 days of BTC history for the regime filter; on first run it can warm up from Binance if available, or pre-fill the DB.
 - The runner throttles orders for this strategy (e.g. order spacing) to stay within API limits.
 - **Trade and API logging**: Each order attempt and its success/failure is logged with `order_result` / `cancel_result` so you can verify autonomous execution and audit API outcomes (required for judging).

@@ -1,7 +1,13 @@
-# Config for hybrid_trend_cross_sectional strategy.
-# Set BOT_STRATEGY=hybrid_trend_cross_sectional in .env. Secrets stay in .env.
+# config.yaml — strategy and runner settings
+# Set BOT_STRATEGY in .env (e.g. hybrid_trend_cross_sectional or hybrid_trend_cross_sectional_throttled).
+# Secrets (API keys) stay in .env only.
+
+# -----------------------------------------------------------------------------
+# Strategy params (merged into strategy_params for the strategy named in BOT_STRATEGY)
+# -----------------------------------------------------------------------------
 
 strategy:
+  # --- hybrid_trend_cross_sectional + hybrid_trend_cross_sectional_throttled (shared) ---
   N: 5
   ma_window: 20
   momentum_weights: [0.2, 0.3, 0.5]
@@ -15,21 +21,38 @@ strategy:
   max_orders_per_cycle: 2
   order_spacing_sec: 65
   db_path: ./prices.db
+
+  # --- Risk (hybrid + throttled) ---
   risk:
     max_consecutive_errors: 5
     btc_daily_move_kill: 0.40
 
+  # --- hybrid_trend_cross_sectional_throttled only (prelim soft exposure) ---
+  regime:
+    ma_window: 20
+    prelim_mode: true
+    strong_exposure: 0.85
+    soft_exposure: 0.35
+    consecutive_below_to_off: 2
+
+# -----------------------------------------------------------------------------
+# Runner / execution (tick interval, order pacing)
+# -----------------------------------------------------------------------------
 execution:
   cycle_sec: 300
   max_orders_per_cycle: 2
   order_spacing_sec: 65
 
+# -----------------------------------------------------------------------------
+# Data paths (price store, logs)
+# -----------------------------------------------------------------------------
 data:
   db_path: ./prices.db
   log_dir: ./logs/
 
-# Optional: backtest script (scripts/run_backtest.py). CLI overrides these.
-# Omit start_date/end_date to use all available OHLCV data; set them for a specific window (e.g. competition dates).
+# -----------------------------------------------------------------------------
+# Backtest (scripts/run_backtest.py). Omit start_date/end_date to use all data.
+# -----------------------------------------------------------------------------
 backtest:
   start_date: "2025-03-01"
   end_date: "2026-03-18"
