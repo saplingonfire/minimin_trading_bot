@@ -136,26 +136,6 @@ if _STATIC_DIR.exists():
     app.mount("/dashboard", StaticFiles(directory=str(_STATIC_DIR), html=True), name="dashboard")
 
 
-@app.get("/api/env_check")
-def api_env_check() -> dict:
-    """Verify which credential env vars are set (names only; no values). For debugging deployment."""
-    def _ok(name: str) -> bool:
-        return bool((os.environ.get(name) or "").strip())
-    return {
-        "test": {
-            ENV_TEST_API_KEY: _ok(ENV_TEST_API_KEY),
-            ENV_TEST_SECRET_KEY: _ok(ENV_TEST_SECRET_KEY),
-            ENV_TEST_BASE_URL: _ok(ENV_TEST_BASE_URL),
-        },
-        "live": {
-            ENV_API_KEY: _ok(ENV_API_KEY),
-            ENV_SECRET_KEY: _ok(ENV_SECRET_KEY),
-            ENV_BASE_URL: _ok(ENV_BASE_URL),
-        },
-        "DASHBOARD_USE_LIVE": _ok(ENV_LIVE),
-    }
-
-
 @app.get("/api/server_time")
 def api_server_time(account: str | None = Query(None, description="test or live")) -> dict:
     """GET server time and connectivity."""
