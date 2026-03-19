@@ -96,10 +96,11 @@
   </style>
 </head>
 <body>
-  <h1>Roostoo Bot Dashboard</h1>
+  <h1 id="page-title">Roostoo Bot Dashboard</h1>
   <div class="bar">
     <span id="status" class="status">Loading…</span>
     <button id="refresh" type="button">Refresh</button>
+    <button id="switch-mode" type="button">Switch to Live</button>
   </div>
 
   <div class="grid">
@@ -152,6 +153,24 @@
   <script>
     const API = '/api';
 
+    function getAccount() {
+      return window.location.pathname.includes('/live') ? 'live' : 'test';
+    }
+
+    function setPageMode() {
+      const isLive = getAccount() === 'live';
+      document.title = 'Roostoo Bot Dashboard (' + (isLive ? 'Live' : 'Test') + ')';
+      const h1 = document.getElementById('page-title');
+      if (h1) h1.textContent = 'Roostoo Bot Dashboard (' + (isLive ? 'Live' : 'Test') + ')';
+      const btn = document.getElementById('switch-mode');
+      if (btn) {
+        btn.textContent = isLive ? 'Switch to Test' : 'Switch to Live';
+        btn.onclick = function() {
+          window.location.href = isLive ? '/dashboard/test/' : '/dashboard/live/';
+        };
+      }
+    }
+
     function setStatus(text, ok) {
       const el = document.getElementById('status');
       el.textContent = text;
@@ -174,7 +193,8 @@
     }
 
     async function fetchApi(path) {
-      const r = await fetch(API + path);
+      const sep = path.indexOf('?') >= 0 ? '&' : '?';
+      const r = await fetch(API + path + (path.includes('account=') ? '' : sep + 'account=' + encodeURIComponent(getAccount())));
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
         const d = data.detail;
@@ -336,6 +356,7 @@
       document.getElementById('refresh').disabled = false;
     }
 
+    setPageMode();
     document.getElementById('refresh').addEventListener('click', refresh);
     refresh();
   </script>

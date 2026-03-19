@@ -15,7 +15,7 @@ _env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(_env_path)
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from roostoo.client import RoostooClient
@@ -59,9 +59,12 @@ def _parse_bool(s: str | None) -> bool:
     return s.strip().lower() in ("1", "true", "yes")
 
 
-def _get_client() -> RoostooClient:
-    """Build RoostooClient from env. Uses test credentials unless DASHBOARD_USE_LIVE=true."""
-    use_live = _parse_bool(os.environ.get(ENV_LIVE))
+def _get_client(account: str | None = None) -> RoostooClient:
+    """Build RoostooClient. account='live' or 'test' (from path/query); else use DASHBOARD_USE_LIVE env."""
+    if account is not None:
+        use_live = account.strip().lower() == "live"
+    else:
+        use_live = _parse_bool(os.environ.get(ENV_LIVE))
     if use_live:
         api_key = os.environ.get(ENV_API_KEY, "")
         secret_key = os.environ.get(ENV_SECRET_KEY, "")
@@ -83,24 +86,58 @@ def _get_client() -> RoostooClient:
 app = FastAPI(title="Roostoo Dashboard API", version="0.1.0")
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_INDEX_HTML = _STATIC_DIR / "index.html"
+
+
+@app.get("/", response_class=RedirectResponse)
+def root_redirect() -> RedirectResponse:
+    """Redirect root to dashboard test."""
+    return RedirectResponse(url="/dashboard/test/", status_code=302)
 
 
 @app.get("/dashboard", response_class=RedirectResponse)
+@app.get("/dashboard/", response_class=RedirectResponse)
 def dashboard_redirect() -> RedirectResponse:
-    """Redirect /dashboard to /dashboard/ so static index is served."""
-    return RedirectResponse(url="/dashboard/", status_code=302)
+    """Redirect /dashboard and /dashboard/ to /dashboard/test/."""
+    return RedirectResponse(url="/dashboard/test/", status_code=302)
 
 
-# Mount static files under /dashboard; html=True serves index.html for /dashboard/
+@app.get("/dashboard/test", response_class=RedirectResponse)
+def dashboard_test_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/dashboard/test/", status_code=302)
+
+
+@app.get("/dashboard/test/")
+def dashboard_test() -> FileResponse:
+    """Serve dashboard for test account."""
+    if not _INDEX_HTML.exists():
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    return FileResponse(_INDEX_HTML)
+
+
+@app.get("/dashboard/live", response_class=RedirectResponse)
+def dashboard_live_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/dashboard/live/", status_code=302)
+
+
+@app.get("/dashboard/live/")
+def dashboard_live() -> FileResponse:
+    """Serve dashboard for live account."""
+    if not _INDEX_HTML.exists():
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    return FileResponse(_INDEX_HTML)
+
+
+# Mount static files under /dashboard for assets (e.g. if any); test/live serve index above
 if _STATIC_DIR.exists():
     app.mount("/dashboard", StaticFiles(directory=str(_STATIC_DIR), html=True), name="dashboard")
 
 
 @app.get("/api/server_time")
-def api_server_time() -> dict:
+def api_server_time(account: str | None = Query(None, description="test or live")) -> dict:
     """GET server time and connectivity."""
     try:
-        return _get_client().get_server_time()
+        return _get_client(account).get_server_time()
     except RoostooAPIError as e:
         _handle_roostoo_error(e, "/api/server_time")
         raise HTTPException(
@@ -112,10 +149,10 @@ def api_server_time() -> dict:
 
 
 @app.get("/api/exchange_info")
-def api_exchange_info() -> dict:
+def api_exchange_info(account: str | None = Query(None, description="test or live")) -> dict:
     """GET exchange info (symbols, rules)."""
     try:
-        return _get_client().get_exchange_info()
+        return _get_client(account).get_exchange_info()
     except RoostooAPIError as e:
         _handle_roostoo_error(e, "/api/exchange_info")
         raise HTTPException(
@@ -127,10 +164,13 @@ def api_exchange_info() -> dict:
 
 
 @app.get("/api/ticker")
-def api_ticker(pair: str | None = Query(None)) -> dict:
+def api_ticker(
+    pair: str | None = Query(None),
+    account: str | None = Query(None, description="test or live"),
+) -> dict:
     """GET ticker for one pair or all pairs."""
     try:
-        return _get_client().get_ticker(pair)
+        return _get_client(account).get_ticker(pair)
     except RoostooAPIError as e:
         _handle_roostoo_error(e, "/api/ticker")
         raise HTTPException(
@@ -142,10 +182,10 @@ def api_ticker(pair: str | None = Query(None)) -> dict:
 
 
 @app.get("/api/balance")
-def api_balance() -> dict:
+def api_balance(account: str | None = Query(None, description="test or live")) -> dict:
     """GET current wallet balance (signed)."""
     try:
-        return _get_client().get_balance()
+        return _get_client(account).get_balance()
     except RoostooAPIError as e:
         _handle_roostoo_error(e, "/api/balance")
         raise HTTPException(
@@ -157,10 +197,10 @@ def api_balance() -> dict:
 
 
 @app.get("/api/pending_count")
-def api_pending_count() -> dict:
+def api_pending_count(account: str | None = Query(None, description="test or live")) -> dict:
     """GET pending order count (signed). API returns Success: false when no pending orders; we return 0."""
     try:
-        return _get_client().get_pending_count()
+        return _get_client(account).get_pending_count()
     except RoostooAPIError as e:
         msg = str(e).strip().lower()
         if "no pending order" in msg:
@@ -180,10 +220,11 @@ def api_orders(
     pending_only: bool | None = Query(None),
     limit: int | None = Query(50, ge=1, le=200),
     offset: int | None = Query(None, ge=0),
+    account: str | None = Query(None, description="test or live"),
 ) -> dict:
     """GET order history or pending orders (signed)."""
     try:
-        client = _get_client()
+        client = _get_client(account)
         return client.query_order(
             pair=pair,
             pending_only=pending_only,
