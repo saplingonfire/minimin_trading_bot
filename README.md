@@ -124,9 +124,9 @@ Strategies that need candles (e.g. momentum, Bollinger/RSI) read from local CSV 
 
 1. **Install the optional Binance sync dependency**: `pip install .[binance]` (or `pip install binance-historical-data`).
 2. **Sync data** (run manually or via cron, with venv activated):
-   ```bash
+  ```bash
    python scripts/sync_binance_historical.py --data-dir data/binance --interval 1h --interval 4h
-   ```
+  ```
    Use `--tickers BTC,ETH,BNB` to limit pairs; see `--help` for options.
 3. **Point the bot at the dump directory**: set `BINANCE_DATA_DIR=data/binance` in `.env` (use the same path as `--data-dir`). The runner reads `BINANCE_DATA_DIR` and passes it to the OHLCV provider. If `BINANCE_DATA_DIR` is not set, `context.ohlcv_provider` is `None` and strategies that need OHLCV should no-op.
 
@@ -134,15 +134,17 @@ Strategies that need candles (e.g. momentum, Bollinger/RSI) read from local CSV 
 
 A web dashboard at `/dashboard` lets you monitor your Roostoo account (balance, pending orders, server time, recent orders, ticker) using the same SDK GET APIs. The backend proxies requests so API keys never leave the server.
 
+Note: Due to competition regulation, this is a strictly READ-only dashboard for monitoring. No trade actions can be executed via the dashboard.
+
 1. **Install dependencies** (included in `requirements.txt`; or `pip install .[dashboard]`):
-   ```bash
+  ```bash
    pip install -r requirements.txt
-   ```
+  ```
 2. **Set credentials** (same as the bot): e.g. in `.env`, set `ROOSTOO_TEST_API_KEY` and `ROOSTOO_TEST_SECRET_KEY` for the test account, or `ROOSTOO_API_KEY` and `ROOSTOO_SECRET_KEY` for live. Optionally set `DASHBOARD_USE_LIVE=true` to use live credentials.
 3. **Run the server** from the repo root (with venv activated):
-   ```bash
+  ```bash
    uvicorn dashboard.server:app --reload --port 8000
-   ```
+  ```
 4. **Open** [http://localhost:8000/dashboard](http://localhost:8000/dashboard) in your browser. The page refreshes data periodically; use the Refresh button to fetch immediately.
 
 **Deploy on Vercel:** Connect the repo in the Vercel dashboard. Build settings are in `vercel.json`: **Install Command** `pip install -r requirements.txt`, **Build Command** empty, **Output Directory** empty. The app entrypoint is set in `pyproject.toml` (`app = "dashboard.server:app"`). Add environment variables in Vercel (e.g. `ROOSTOO_TEST_API_KEY`, `ROOSTOO_TEST_SECRET_KEY`) so the dashboard can call the API.
@@ -159,3 +161,4 @@ python -m pytest tests/ -v
 ## API reference
 
 - [Roostoo Public API docs](https://github.com/roostoo/Roostoo-API-Documents)
+
