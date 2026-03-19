@@ -2,6 +2,7 @@
 """Test all Roostoo SDK methods using test credentials (ROOSTOO_TEST_* from .env)."""
 
 import argparse
+import json
 import os
 import sys
 
@@ -27,25 +28,27 @@ ENV_TEST_BASE_URL = "ROOSTOO_TEST_BASE_URL"
 DEFAULT_BASE_URL = "https://mock-api.roostoo.com"
 
 
-def run(name: str, fn, *args, **kwargs) -> tuple[bool, str]:
-    """Run a test; return (ok, message)."""
+def run(name: str, fn, *args, **kwargs) -> tuple[bool, str, dict | None]:
+    """Run a test; return (ok, message, response). response is None on failure or when not dict."""
     try:
         out = fn(*args, **kwargs)
         if out is None:
-            return (True, "ok")
+            return (True, "ok", None)
         if isinstance(out, dict):
             keys = list(out.keys())[:5]
-            return (True, str(keys) if keys else "ok")
-        return (True, str(type(out).__name__))
+            return (True, str(keys) if keys else "ok", out)
+        return (True, str(type(out).__name__), None)
     except RoostooAPIError as e:
         msg = str(e).strip()
         if msg == "no order matched":
-            return (True, "ok (no orders)")
+            return (True, "ok (no orders)", None)
         if "no pending order" in msg.lower():
-            return (True, "ok (no pending orders)")
-        return (False, msg)
+            return (True, "ok (no pending orders)", None)
+        if "no order canceled" in msg.lower():
+            return (True, "ok (no orders to cancel)", None)
+        return (False, msg, None)
     except Exception as e:
-        return (False, f"{type(e).__name__}: {e}")
+        return (False, f"{type(e).__name__}: {e}", None)
 
 
 def main() -> int:
@@ -67,6 +70,12 @@ def main() -> int:
         "--quiet",
         action="store_true",
         help="Only print failures",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Log full API response JSON for each test",
     )
     args = parser.parse_args()
 
@@ -108,12 +117,14 @@ def main() -> int:
 
     failed = 0
     for name, fn in tests:
-        ok, msg = run(name, fn)
+        ok, msg, response = run(name, fn)
         if not ok:
             failed += 1
             print(f"FAIL {name}: {msg}")
         elif not args.quiet:
             print(f"OK   {name}: {msg}")
+        if args.verbose and response is not None:
+            print(json.dumps(response, indent=2))
 
     if failed:
         print(f"\n{failed} failure(s)", file=sys.stderr)
