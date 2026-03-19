@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from bot.backtest import run_backtest, compute_metrics, print_report
+from bot.backtest import run_backtest, compute_metrics, print_report, BacktestResult
 
 
 def _write_1h_csv(path: Path, day_start_ms: int, close: float, volume: float = 1000.0) -> None:
@@ -38,16 +38,18 @@ def test_backtest_engine_returns_equity_and_trades(tmp_path: Path) -> None:
     for i in range(10):
         _write_1h_csv(base / f"BTCUSDT-1h-2024-01-{i+1:02d}.csv", start_ms + i * day_ms, 40000.0 + i * 100)
 
-    equity_curve, trades = run_backtest(
+    result = run_backtest(
         str(tmp_path),
         "hybrid_trend_cross_sectional",
         {"ma_window": 5, "N": 2, "min_days_history": 2, "min_volume_usd": 0},
         initial_balance_usd=10_000.0,
     )
-    assert isinstance(equity_curve, list)
-    assert isinstance(trades, list)
-    assert len(equity_curve) >= 1
-    assert equity_curve[0][1] == 10_000.0
+    assert isinstance(result, BacktestResult)
+    assert isinstance(result.equity_curve, list)
+    assert isinstance(result.trades, list)
+    assert isinstance(result.end_portfolio, list)
+    assert len(result.equity_curve) >= 1
+    assert result.equity_curve[0][1] == 10_000.0
 
 
 def test_report_metrics_are_numeric() -> None:

@@ -105,7 +105,7 @@ def main() -> int:
         initial_balance = 10_000.0
 
     try:
-        equity_curve, trades = run_backtest(
+        result = run_backtest(
             data_dir,
             strategy_name,
             strategy_params,
@@ -120,8 +120,8 @@ def main() -> int:
         logging.exception("backtest error")
         return 1
 
-    metrics = compute_metrics(equity_curve, trades)
-    print_report(metrics, strategy_name=strategy_name)
+    metrics = compute_metrics(result.equity_curve, result.trades)
+    print_report(metrics, strategy_name=strategy_name, portfolio_breakdown=result.end_portfolio)
     return 0
 
 
