@@ -113,6 +113,9 @@ def main() -> int:
     if initial_balance is None:
         initial_balance = 10_000.0
 
+    # Mute strategy INFO logs (e.g. regime=risk-off) during backtest; engine still logs fills.
+    logging.getLogger("bot.strategies").setLevel(logging.WARNING)
+
     try:
         result = run_backtest(
             data_dir,

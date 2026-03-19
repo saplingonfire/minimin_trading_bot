@@ -7,7 +7,8 @@ BinanceHistoricalFileProvider can read it.
 
 Usage:
   python scripts/sync_binance_historical.py [--data-dir data/binance] [--interval 1h] [--interval 4h]
-  python scripts/sync_binance_historical.py --tickers BTC,ETH,BNB --update
+  python scripts/sync_binance_historical.py --tickers BTC,ETH --update
+  python scripts/sync_binance_historical.py   # syncs full Roostoo tradeable universe
 """
 
 from __future__ import annotations
@@ -20,7 +21,77 @@ from pathlib import Path
 
 VALID_INTERVALS = ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h")
 
-DEFAULT_TICKERS = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
+# Roostoo tradeable universe (from /v3/ticker); symbols as Binance USDT pairs
+ROOSTOO_TRADEABLE_UNIVERSE = [
+    "1000CHEEMSUSDT",
+    "AAVEUSDT",
+    "ADAUSDT",
+    "APTUSDT",
+    "ARBUSDT",
+    "ASTERUSDT",
+    "AVAXUSDT",
+    "AVNTUSDT",
+    "BIOUSDT",
+    "BMTUSDT",
+    "BNBUSDT",
+    "BONKUSDT",
+    "BTCUSDT",
+    "CAKEUSDT",
+    "CFXUSDT",
+    "CRVUSDT",
+    "DOGEUSDT",
+    "DOTUSDT",
+    "EDENUSDT",
+    "EIGENUSDT",
+    "ENAUSDT",
+    "ETHUSDT",
+    "FETUSDT",
+    "FILUSDT",
+    "FLOKIUSDT",
+    "FORMUSDT",
+    "HBARUSDT",
+    "HEMIUSDT",
+    "ICPUSDT",
+    "LINEAUSDT",
+    "LINKUSDT",
+    "LISTAUSDT",
+    "LTCUSDT",
+    "MIRAUSDT",
+    "NEARUSDT",
+    "ONDOUSDT",
+    "OPENUSDT",
+    "PAXGUSDT",
+    "PENDLEUSDT",
+    "PENGUUSDT",
+    "PEPEUSDT",
+    "PLUMEUSDT",
+    "POLUSDT",
+    "PUMPUSDT",
+    "SUSDT",
+    "SEIUSDT",
+    "SHIBUSDT",
+    "SOLUSDT",
+    "SOMIUSDT",
+    "STOUSDT",
+    "SUIUSDT",
+    "TAOUSDT",
+    "TONUSDT",
+    "TRUMPUSDT",
+    "TRXUSDT",
+    "TUTUSDT",
+    "UNIUSDT",
+    "VIRTUALUSDT",
+    "WIFUSDT",
+    "WLDUSDT",
+    "WLFIUSDT",
+    "XLMUSDT",
+    "XPLUSDT",
+    "XRPUSDT",
+    "ZECUSDT",
+    "ZENUSDT",
+]
+
+DEFAULT_TICKERS = ROOSTOO_TRADEABLE_UNIVERSE
 
 
 def main(args: list[str] | None = None) -> int:
@@ -114,7 +185,7 @@ def _parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--tickers",
-        help="Comma-separated symbols (e.g. BTC,ETH,BNB or BTCUSDT,ETHUSDT). Default: BTC, ETH, BNB.",
+        help="Comma-separated symbols (e.g. BTC,ETH or BTCUSDT,ETHUSDT). Default: full Roostoo tradeable universe.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     return parser.parse_args(args)

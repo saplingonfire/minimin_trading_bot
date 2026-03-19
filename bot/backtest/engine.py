@@ -85,6 +85,7 @@ def _apply_fill(
         cb_cost, cb_qty = cost_basis.get(base, (0.0, 0.0))
         cost_basis[base] = (cb_cost + spend, cb_qty + qty)
         trades.append({"ts_ms": ts_ms, "pair": signal.pair, "side": "BUY", "quantity": qty, "price": price, "notional_usd": spend})
+        logger.info("fill BUY %s qty=%.6g @ %.2f notional=%.2f USD", signal.pair, qty, price, spend)
     else:
         free_base = get_balance_free(balance, base)
         sell_qty = min(signal.quantity, free_base)
@@ -103,6 +104,7 @@ def _apply_fill(
         if pnl is not None:
             rec["pnl"] = pnl
         trades.append(rec)
+        logger.info("fill SELL %s qty=%.6g @ %.2f notional=%.2f USD pnl=%s", signal.pair, sell_qty, price, proceeds, pnl if pnl is not None else "n/a")
 
 
 def run_backtest(
