@@ -158,10 +158,13 @@ def api_balance() -> dict:
 
 @app.get("/api/pending_count")
 def api_pending_count() -> dict:
-    """GET pending order count (signed)."""
+    """GET pending order count (signed). API returns Success: false when no pending orders; we return 0."""
     try:
         return _get_client().get_pending_count()
     except RoostooAPIError as e:
+        msg = str(e).strip().lower()
+        if "no pending order" in msg:
+            return {"Success": True, "ErrMsg": "", "TotalPending": 0, "OrderPairs": {}}
         _handle_roostoo_error(e, "/api/pending_count")
         raise HTTPException(
             status_code=_api_error_status(e),
