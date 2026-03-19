@@ -2,3 +2,7 @@
 requests>=2.28
 python-dotenv>=1.0
 PyYAML>=6.0
+
+# Dashboard (run: uvicorn dashboard.server:app --reload)
+FastAPI>=0.100
+uvicorn[standard]>=0.22

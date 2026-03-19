@@ -19,6 +19,10 @@ dev = [
 binance = [
     "binance-historical-data",
 ]
+dashboard = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.22",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
