@@ -85,6 +85,17 @@ def _get_client(account: str | None = None) -> RoostooClient:
 
 app = FastAPI(title="Roostoo Dashboard API", version="0.1.0")
 
+# When deployed on Vercel, rewrites send all requests to /api/...; strip prefix so routes match.
+_API_PREFIX = "/api"
+
+@app.middleware("http")
+async def strip_vercel_api_prefix(request, call_next):
+    path = request.scope.get("path") or ""
+    if path.startswith(_API_PREFIX):
+        new_path = path[len(_API_PREFIX):] or "/"
+        request.scope["path"] = new_path
+    return await call_next(request)
+
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _INDEX_HTML = _STATIC_DIR / "index.html"
 
