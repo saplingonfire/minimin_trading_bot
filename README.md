@@ -1,10 +1,56 @@
-# Roostoo Public API SDK (Python)
+# Minimin Trading Bot
 
-Python client for the [Roostoo Public API (v3)](https://github.com/roostoo/Roostoo-API-Documents).
+Modular crypto trading bot for the [Roostoo](https://github.com/roostoo/Roostoo-API-Documents) API, built for the **SG vs HK University Web3 Quant Hackathon**. Includes a Python SDK for the Roostoo Public API (v3), pluggable strategies, risk controls, backtesting, and a read-only dashboard.
+
+---
+
+## Features
+
+- **Roostoo SDK** — Python client for Roostoo Public API v3: server time, exchange info, ticker, balance, place/cancel/query orders (market and limit). HMAC signing, configurable base URL.
+- **Modular bot** — Strategy abstraction (`Strategy.next(context) -> signals`), execution layer (precision, risk guards, retries), market-data facade. Add strategies under `bot/strategies/` and register by name.
+- **Test vs live credentials** — Two credential sets (env: `ROOSTOO_TEST_*` and `ROOSTOO_API_KEY`/`ROOSTOO_SECRET_KEY`). Switch with `BOT_LIVE` or CLI `--live` / `--test`.
+- **Config** — Env vars (`.env`) plus optional `config.yaml` for strategy params, execution pacing, risk, and backtest settings. Strategy section is merged into `strategy_params` for the chosen strategy.
+- **Risk and kill switch** — Drawdown ladder (e.g. −5% / −10% / −15% from peak), BTC daily move kill (e.g. 40%), consecutive API error halt, optional cancel-on-stop for managed pairs.
+- **Strategies** — Example (test pipeline); hybrid trend + cross-sectional momentum (BTC MA20 regime, top-N inverse-vol); throttled variant (three-tier regime, soft exposure); cross-sectional momentum (weekly rebalance); momentum 20/50 (EMA crossover); Bollinger + RSI.
+- **Backtest** — Script runs configured strategy over Binance historical OHLCV; prints performance report (returns, drawdown, etc.).
+- **Historical data sync** — Script to download Binance spot klines to local CSV (Roostoo tradeable universe or custom tickers). Strategies that need OHLCV use `BINANCE_DATA_DIR` or a file-based provider.
+- **Dashboard** — Read-only web UI (FastAPI) to monitor balance, orders, ticker; uses same SDK. No trading from the dashboard (competition rules). Deployable to Vercel.
+
+---
+
+## Project structure
+
+```
+minimin_trading_bot/
+├── roostoo/              # Roostoo Public API SDK (client, auth, models, exceptions)
+├── bot/                  # Trading bot
+│   ├── base.py           # Strategy ABC, TradingContext, PlaceOrderSignal, CancelOrderSignal
+│   ├── runner.py         # Tick loop, strategy load, kill switch, order pacing
+│   ├── market.py         # build_context (ticker, balance, pending orders)
+│   ├── execution.py      # Signal → orders; precision, risk guards, retries
+│   ├── risk.py           # Drawdown ladder, kill_switch_check (errors, drift, BTC move)
+│   ├── price_store.py    # SQLite price history (regime / momentum)
+│   ├── regime.py         # BTC vs MA regime (risk_on / risk_off)
+│   ├── strategies/       # Strategy implementations + registry
+│   └── backtest/         # Backtest engine and report
+├── config/               # BotSettings, load_settings, optional config.yaml merge
+├── dashboard/            # Read-only monitoring server
+├── scripts/
+│   ├── run_bot.py        # Main entrypoint: run bot with --strategy, --live/--test, --dry-run
+│   ├── run_backtest.py   # Backtest from config + Binance data
+│   ├── sync_binance_historical.py  # Download Binance OHLCV (Roostoo universe or --tickers)
+│   ├── setup_venv.sh     # Create venv and install deps (macOS/Linux)
+│   └── setup_venv.bat    # Windows
+├── config.yaml           # Strategy params, execution, data paths, backtest (see config.yaml.example)
+├── .env.example          # Env template (credentials, BOT_*, optional BINANCE_DATA_DIR)
+└── requirements.txt
+```
+
+---
 
 ## Install
 
-The project uses a **virtual environment in the repo** (`venv/`). All commands (run_bot, pytest, scripts) should be run with this venv activated.
+The project uses a **virtual environment in the repo** (`venv/`). Run all commands with this venv activated.
 
 **One-time setup** (from repo root):
 
@@ -20,145 +66,205 @@ source venv/bin/activate         # macOS/Linux
 venv\Scripts\activate            # Windows
 ```
 
-**Manual setup** (if you prefer):
+**Manual setup:**
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate         # or venv\Scripts\activate on Windows
+source venv/bin/activate        # or venv\Scripts\activate on Windows
 pip install -e .
 pip install -r requirements.txt
 ```
 
-**Manual setup without running scripts** (no `./scripts/setup_venv.sh`, no `source activate`). From repo root, run these one at a time:
-
-```bash
-# 1. Create the venv
-python3 -m venv venv
-
-# 2. Install the project and dependencies (use the venv’s pip directly)
-venv/bin/pip install -e .
-venv/bin/pip install -r requirements.txt
-```
-
-To run the bot or tests without activating the venv, call the venv’s Python explicitly:
+**Without activating** (use venv Python directly):
 
 ```bash
 venv/bin/python scripts/run_bot.py --strategy example --dry-run
 venv/bin/python -m pytest tests/ -v
 ```
 
-(On Windows use `venv\Scripts\python.exe` and `venv\Scripts\pip.exe` instead of `venv/bin/python` and `venv/bin/pip`.)
+(On Windows use `venv\Scripts\python.exe`.)
 
-The `venv/` directory is gitignored; each clone creates its own.
+The `venv/` directory is gitignored.
+
+---
 
 ## Configuration
 
-Set your API credentials (from [Roostoo](https://github.com/roostoo/Roostoo-API-Documents#public-apikey--secretkey)):
+### Environment (.env)
 
-- **Environment:** `ROOSTOO_API_KEY` and `ROOSTOO_SECRET_KEY`
-- **Or** pass them when creating the client:
+Copy `.env.example` to `.env` and set:
 
-```python
-from roostoo import RoostooClient
+- **Credentials**
+  - **Test account (default):** `ROOSTOO_TEST_API_KEY`, `ROOSTOO_TEST_SECRET_KEY`. Optional: `ROOSTOO_TEST_BASE_URL` (default `https://mock-api.roostoo.com`).
+  - **Live account:** `ROOSTOO_API_KEY`, `ROOSTOO_SECRET_KEY`. Optional: `ROOSTOO_BASE_URL`.
+- **Bot**
+  - `BOT_STRATEGY` — Strategy name (e.g. `hybrid_trend_cross_sectional`, `hybrid_trend_cross_sectional_throttled`, `example`).
+  - `BOT_LIVE` — `true` to use live credentials, `false` (default) for test.
+  - `BOT_TICK_SECONDS` — Seconds between ticks (default 30; overridable by `config.yaml` execution.cycle_sec).
+  - `BOT_DRY_RUN` — `true` to log orders only, no API place/cancel.
+  - `BOT_CANCEL_ORDERS_ON_STOP` — If true, cancel managed pairs on graceful shutdown.
+  - `BOT_CONFIG_PATH` — Path to YAML config (default `config.yaml`).
+  - Optional: `BOT_STRATEGY_PARAMS` (JSON) to override strategy params; usually strategy params come from `config.yaml`.
+  - Optional: `BOT_PRICE_STORE_PATH` or set in config `data.db_path` for hybrid strategies (SQLite price history).
+  - Optional: `BOT_MAX_ORDERS_PER_CYCLE`, `BOT_ORDER_SPACING_SEC` (or in config execution).
+  - Optional risk: `BOT_MAX_PENDING_ORDERS`, `BOT_MAX_ORDER_NOTIONAL`.
+- **OHLCV (strategies that need candles):** `BINANCE_DATA_DIR` — Path to Binance CSV dump (e.g. `data/binance`). If unset, strategies that require OHLCV will no-op.
 
-client = RoostooClient(
-    api_key="YOUR_API_KEY",
-    secret_key="YOUR_SECRET_KEY",
-    base_url="https://mock-api.roostoo.com",  # optional, this is the default
-)
-```
+### config.yaml
+
+Optional. Used for strategy params, execution pacing, data paths, and backtest.
+
+- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
+- **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec.
+- **data** — db_path (price store), log_dir.
+- **backtest** — start_date, end_date, initial_balance, data_dir.
+
+See `config.yaml.example` and the in-file comments in `config.yaml`.
+
+---
 
 ## Usage
+
+### Running the bot
+
+With the repo venv **activated**:
+
+```bash
+cp .env.example .env
+# Edit .env: set credentials and BOT_STRATEGY
+python scripts/run_bot.py --strategy hybrid_trend_cross_sectional [--test] [--dry-run]
+```
+
+**CLI options:**
+
+- `--strategy`, `-s` — Strategy name (overrides `BOT_STRATEGY`).
+- `--live` — Use live credentials.
+- `--test` — Use test credentials (default).
+- `--dry-run` — Do not place or cancel orders; log only.
+- `--tick-seconds` — Override tick interval.
+- `--env-file` — Path to `.env` (default `.env`).
+- `-v` — Verbose logging.
+
+**Strategies:**
+
+| Name | Description |
+|------|-------------|
+| `example` | Places a MARKET buy every N ticks (for testing the pipeline). |
+| `hybrid_trend_cross_sectional` | BTC MA20 regime filter + cross-sectional momentum (top-N by MomScore, inverse-vol weights). Long-only; risk-off when BTC below MA20. |
+| `hybrid_trend_cross_sectional_throttled` | Same idea with three-tier regime: strong (full exposure), soft (e.g. 35% when BTC slightly below MA20), risk_off after 2 consecutive daily closes below MA20. Suited to preliminary round. |
+| `cross_sectional_momentum` | Weekly rebalance; top N by 90d return; 200 MA filter. Requires `BINANCE_DATA_DIR`. |
+| `momentum_20_50` | EMA 20/50 crossover, ATR trailing stop. Requires `BINANCE_DATA_DIR`. |
+| `bollinger_rsi` | Bollinger + RSI oversold, 4H regime filter. Requires `BINANCE_DATA_DIR`. |
+
+For the **SG vs HK Quant Hackathon**, use **hybrid_trend_cross_sectional** or **hybrid_trend_cross_sectional_throttled** so the bot runs with Roostoo data only (price store + ticker). Set `BOT_STRATEGY` and optionally `BOT_PRICE_STORE_PATH` (or config `data.db_path`). The bot needs ~20 days of BTC history for the regime filter; it can warm up from Binance if available or you can pre-fill the price DB.
+
+**Hackathon (AWS EC2):**
+
+1. Follow the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816): launch instance in ap-southeast-2, connect via Session Manager.
+2. Clone the repo, create and activate venv (`./scripts/setup_venv.sh` then `source venv/bin/activate`).
+3. Copy `.env.example` to `.env`, set test/live credentials and `BOT_STRATEGY`.
+4. Run under **tmux** so the bot keeps running after disconnect: `tmux`, then `python scripts/run_bot.py --strategy hybrid_trend_cross_sectional_throttled`. Detach: `Ctrl+B` then `D`. Reattach: `tmux attach`.
+
+---
+
+### Historical data (OHLCV)
+
+Strategies that need candles read from local data. The bot does **not** download data at runtime.
+
+1. **Optional dependency:** `pip install .[binance]` or `pip install binance-historical-data`.
+2. **Sync data** (with venv activated):
+
+   ```bash
+   python scripts/sync_binance_historical.py --data-dir data/binance --interval 1h --interval 4h
+   ```
+
+   Default tickers = full Roostoo tradeable universe. Limit with `--tickers BTC,ETH,SOL`. Use `--update` to update existing files. See `--help`.
+3. **Point the bot:** set `BINANCE_DATA_DIR=data/binance` in `.env` (same path as `--data-dir`).
+
+---
+
+### Backtest
+
+Run a backtest from the configured strategy and Binance OHLCV; prints a performance report to stdout.
+
+```bash
+python scripts/run_backtest.py --config config.yaml --data-dir data/binance [--start-date 2025-10-01] [--end-date 2026-03-18] [--initial-balance 50000]
+```
+
+- `--config` — Path to YAML (default `config.yaml` or `BOT_CONFIG_PATH`).
+- `--data-dir` — Binance OHLCV directory (default `BINANCE_DATA_DIR`).
+- `--start-date`, `--end-date` — Optional; otherwise uses config backtest section or full data range.
+- `--initial-balance` — Optional; otherwise from config or 10000.
+- Set `BOT_STRATEGY` in env (or in .env) to choose the strategy to backtest.
+
+---
+
+### Dashboard
+
+Read-only web UI to monitor your Roostoo account (balance, pending orders, server time, recent orders, ticker). Uses the same SDK; API keys stay on the server. **No trading** from the dashboard (competition rules).
+
+1. Dependencies are in `requirements.txt` (FastAPI, uvicorn).
+2. Set credentials in `.env` (same as bot). Use `DASHBOARD_USE_LIVE=true` to use live credentials.
+3. From repo root with venv activated:
+
+   ```bash
+   uvicorn dashboard.server:app --reload --port 8000
+   ```
+
+4. Open [http://localhost:8000/dashboard](http://localhost:8000/dashboard).
+
+**Vercel:** Connect the repo; set env vars (e.g. `ROOSTOO_TEST_API_KEY`, `ROOSTOO_TEST_SECRET_KEY`). Build: install `pip install -r requirements.txt`; entrypoint is in `pyproject.toml` (`app = "dashboard.server:app"`).
+
+---
+
+## Risk and kill switch
+
+- **Drawdown ladder** (`bot/risk.py`): From portfolio peak, −5% → 70% target exposure, −10% → 50%, −15% → force risk-off (0% target). Recovery when portfolio ≥ 95% of peak.
+- **Kill switch** (`kill_switch_check`): (1) Consecutive API errors ≥ 5 → halt bot and force risk-off. (2) Clock drift > 60s → halt and force risk-off. (3) |BTC 24h change| > 40% (configurable) → force risk-off only (go to cash, bot keeps running).
+- **Regime (hybrid strategies):** BTC below MA20 (and for throttled, 2 consecutive daily closes below MA20) → risk-off; target weights set to empty so no new longs (existing positions are not auto-sold by the current logic).
+- Config: `strategy.risk.max_consecutive_errors`, `strategy.risk.btc_daily_move_kill` in `config.yaml`.
+
+---
+
+## Roostoo SDK (direct use)
 
 ```python
 from roostoo import RoostooClient, RoostooAPIError
 
-client = RoostooClient()
+client = RoostooClient()  # uses ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY, optional ROOSTOO_BASE_URL
 
-# Public (no auth)
-print(client.get_server_time())
-print(client.get_exchange_info())
+# Public
+client.get_server_time()
+client.get_exchange_info()
+client.get_ticker()           # all pairs
+client.get_ticker("BTC/USD")  # one pair
 
-# Ticker (timestamp only)
-print(client.get_ticker())
-print(client.get_ticker("BTC/USD"))
-
-# Signed (API key + HMAC)
-print(client.get_balance())
-print(client.get_pending_count())
-print(client.place_order("BNB/USD", "BUY", 1))  # MARKET
-print(client.place_order("BTC/USD", "BUY", 0.01, order_type="LIMIT", price=95000))
-print(client.query_order(pair="BTC/USD", pending_only=False))
-print(client.cancel_order(pair="BNB/USD"))
+# Signed
+client.get_balance()
+client.get_pending_count()
+client.place_order("BNB/USD", "BUY", 1)  # MARKET
+client.place_order("BTC/USD", "BUY", 0.01, order_type="LIMIT", price=95000)
+client.query_order(pair="BTC/USD", pending_only=False)
+client.cancel_order(pair="BNB/USD")
 ```
 
-On HTTP or API errors (e.g. `Success: false`), the client raises `RoostooAPIError` with the message and optional `status_code`, `response_body`, and `raw` response.
+On API errors the client raises `RoostooAPIError` with message, optional `status_code`, `response_body`, and `raw`.
 
-## Running the bot
-
-With the repo venv **activated** (see Install above):
-
-```bash
-cp .env.example .env
-# Edit .env: set ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY, BOT_STRATEGY
-python scripts/run_bot.py --strategy example [--dry-run]
-```
-
-- **Strategies**: `example` (place a MARKET buy every N ticks for testing); `hybrid_trend_cross_sectional` (recommended for competition: BTC MA20 regime + cross-sectional momentum, inverse-vol top-N); `hybrid_trend_cross_sectional_throttled` (same but three-tier regime: prelim uses 30–40% exposure when BTC is slightly below MA20, 0% only after 2 consecutive daily closes below MA20); `cross_sectional_momentum` (weekly rebalance, top N by 90d return, 200 MA filter); `momentum_20_50` (EMA 20/50 crossover, ATR trailing stop); `bollinger_rsi` (BB + RSI oversold, 4H regime filter). Add more under `bot/strategies/` and register in `bot/strategies/__init__.py`. Example params in `.env.example`.
-- **Config**: Env vars in `.env` or environment; see `.env.example`. CLI: `--strategy`, `--dry-run`, `--tick-seconds`, `--env-file`.
-- **Hackathon (AWS)**: On the EC2 instance, create and activate the repo venv (`./scripts/setup_venv.sh` then `source venv/bin/activate`), then run the bot. Use `tmux` so the bot keeps running after you disconnect; see the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816).
-
-### Competition deployment (SG vs HK Quant Hackathon)
-
-For the [Roostoo SG vs HK University Web3 Quant Hackathon](https://roostoo.notion.site/Problem-Statement-SG-vs-HK-University-Web3-Quant-Hackathon-309ba22fed7980a79da6d8a08b5216c9), use **hybrid_trend_cross_sectional** or **hybrid_trend_cross_sectional_throttled** so the bot runs with Roostoo data only (no ongoing external OHLCV). The throttled strategy is suited to the preliminary round: it keeps 30–40% exposure when BTC is slightly below MA20 and goes to 0% only after 2 consecutive daily closes below MA20 (set `regime.prelim_mode: true` in config).
-
-- Set `BOT_STRATEGY=hybrid_trend_cross_sectional` or `BOT_STRATEGY=hybrid_trend_cross_sectional_throttled`.
-- Set `BOT_PRICE_STORE_PATH` (or `price_store_path` in config) to a path for the price DB (e.g. `prices.db`). The bot needs ~20 days of BTC history for the regime filter; on first run it can warm up from Binance if available, or pre-fill the DB.
-- The runner throttles orders for this strategy (e.g. order spacing) to stay within API limits.
-- **Trade and API logging**: Each order attempt and its success/failure is logged with `order_result` / `cancel_result` so you can verify autonomous execution and audit API outcomes (required for judging).
-- Other strategies (`cross_sectional_momentum`, `momentum_20_50`, `bollinger_rsi`) require `BINANCE_DATA_DIR` and local OHLCV; they will not place trades if that env is unset.
-
-### Historical data (OHLCV)
-
-Strategies that need candles (e.g. momentum, Bollinger/RSI) read from local CSV dumps. The bot does **not** download data at runtime. Use the repo **venv** when running scripts.
-
-1. **Install the optional Binance sync dependency**: `pip install .[binance]` (or `pip install binance-historical-data`).
-2. **Sync data** (run manually or via cron, with venv activated):
-  ```bash
-   python scripts/sync_binance_historical.py --data-dir data/binance --interval 1h --interval 4h
-  ```
-   Use `--tickers BTC,ETH,BNB` to limit pairs; see `--help` for options.
-3. **Point the bot at the dump directory**: set `BINANCE_DATA_DIR=data/binance` in `.env` (use the same path as `--data-dir`). The runner reads `BINANCE_DATA_DIR` and passes it to the OHLCV provider. If `BINANCE_DATA_DIR` is not set, `context.ohlcv_provider` is `None` and strategies that need OHLCV should no-op.
-
-## Dashboard
-
-A web dashboard at `/dashboard` lets you monitor your Roostoo account (balance, pending orders, server time, recent orders, ticker) using the same SDK GET APIs. The backend proxies requests so API keys never leave the server.
-
-Note: Due to competition regulation, this is a strictly READ-only dashboard for monitoring. No trade actions can be executed via the dashboard.
-
-1. **Install dependencies** (included in `requirements.txt`; or `pip install .[dashboard]`):
-  ```bash
-   pip install -r requirements.txt
-  ```
-2. **Set credentials** (same as the bot): e.g. in `.env`, set `ROOSTOO_TEST_API_KEY` and `ROOSTOO_TEST_SECRET_KEY` for the test account, or `ROOSTOO_API_KEY` and `ROOSTOO_SECRET_KEY` for live. Optionally set `DASHBOARD_USE_LIVE=true` to use live credentials.
-3. **Run the server** from the repo root (with venv activated):
-  ```bash
-   uvicorn dashboard.server:app --reload --port 8000
-  ```
-4. **Open** [http://localhost:8000/dashboard](http://localhost:8000/dashboard) in your browser. The page refreshes data periodically; use the Refresh button to fetch immediately.
-
-**Deploy on Vercel:** Connect the repo in the Vercel dashboard. Build settings are in `vercel.json`: **Install Command** `pip install -r requirements.txt`, **Build Command** empty, **Output Directory** empty. The app entrypoint is set in `pyproject.toml` (`app = "dashboard.server:app"`). Add environment variables in Vercel (e.g. `ROOSTOO_TEST_API_KEY`, `ROOSTOO_TEST_SECRET_KEY`) so the dashboard can call the API.
+---
 
 ## Tests
 
-With the repo **venv** activated:
+With the repo venv activated:
 
 ```bash
-pip install pytest   # if not already installed
+pip install pytest   # if not already
 python -m pytest tests/ -v
 ```
+
+---
 
 ## API reference
 
 - [Roostoo Public API docs](https://github.com/roostoo/Roostoo-API-Documents)
-
+- [Hackathon guide (AWS, launch bot)](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816)
+- [Problem statement (SG vs HK Quant Hackathon)](https://roostoo.notion.site/Problem-Statement-SG-vs-HK-University-Web3-Quant-Hackathon-309ba22fed7980a79da6d8a08b5216c9)
