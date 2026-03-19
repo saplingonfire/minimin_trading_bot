@@ -6,6 +6,9 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
+# Assumed trading days per year for annualized Sharpe ratio.
+TRADING_DAYS_PER_YEAR = 252
+
 
 def _format_ts_ms_as_utc_date(ts_ms: int) -> str:
     """Format timestamp (ms) as YYYY-MM-DD UTC."""
@@ -28,7 +31,7 @@ def _daily_returns(equity_curve: list[tuple[int, float]]) -> list[float]:
 
 
 def _annualized_sharpe(returns: list[float], risk_free_rate: float = 0.0) -> float | None:
-    """Annualized Sharpe ratio (252 trading days). Returns None if insufficient data or zero vol."""
+    """Annualized Sharpe ratio. Returns None if insufficient data or zero vol."""
     if not returns or len(returns) < 2:
         return None
     n = len(returns)
@@ -37,8 +40,8 @@ def _annualized_sharpe(returns: list[float], risk_free_rate: float = 0.0) -> flo
     std = math.sqrt(var) if var > 0 else 0.0
     if std == 0:
         return None
-    excess = mean_r - (risk_free_rate / 252)
-    return (excess / std) * math.sqrt(252)
+    excess = mean_r - (risk_free_rate / TRADING_DAYS_PER_YEAR)
+    return (excess / std) * math.sqrt(TRADING_DAYS_PER_YEAR)
 
 
 def _max_drawdown(equity_curve: list[tuple[int, float]]) -> float:
@@ -127,8 +130,12 @@ def compute_metrics(
     }
 
 
-def print_report(metrics: dict[str, Any], strategy_name: str = "Strategy") -> None:
-    """Print a performance report to stdout (plain text)."""
+def print_report(
+    metrics: dict[str, Any],
+    strategy_name: str = "Strategy",
+    portfolio_breakdown: list[dict[str, Any]] | None = None,
+) -> None:
+    """Print a performance report to stdout (plain text). portfolio_breakdown: optional list of {asset, quantity, value_usd}."""
     lines = [
         "",
         "=== Backtest Report ===",
@@ -151,5 +158,14 @@ def print_report(metrics: dict[str, Any], strategy_name: str = "Strategy") -> No
     lines.append(f"  Trades:        {metrics['num_trades']}")
     if metrics.get("win_rate_pct") is not None:
         lines.append(f"  Win rate:       {metrics['win_rate_pct']:.1f}%")
-    lines.append("")
+    breakdown = portfolio_breakdown if portfolio_breakdown is not None else metrics.get("portfolio_breakdown")
+    if breakdown:
+        # Sort by value_usd descending so largest positions appear first.
+        sorted_breakdown = sorted(breakdown, key=lambda r: r.get("value_usd", 0.0), reverse=True)
+        lines.append("")
+        lines.append("  Portfolio at period end:")
+        for row in sorted_breakdown:
+            asset, qty, val = row["asset"], row["quantity"], row["value_usd"]
+            lines.append(f"    {asset}: {qty:,.6g}  ({val:,.2f} USD)")
+        lines.append("")
     print("\n".join(lines))
