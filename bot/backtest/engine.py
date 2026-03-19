@@ -3,33 +3,31 @@
 from __future__ import annotations
 
 import copy
-import json
 import logging
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from bot.base import PlaceOrderSignal, TradingContext
-from bot.ohlcv import BinanceHistoricalFileProvider, OHLCVCandle, discover_tradeable_pairs, roostoo_pair_to_binance_ticker
+from bot.ohlcv import BinanceHistoricalFileProvider, OHLCVCandle, discover_tradeable_pairs
 from bot.price_store import PriceStore
 from bot.strategies.utils import get_balance_free, get_price, parse_pair
 
 logger = logging.getLogger(__name__)
 
-# #region agent log
-_DEBUG_LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "debug-760b30.log")
-def _debug_log(message: str, data: dict[str, Any], hypothesis_id: str = "no_daily_data") -> None:
-    try:
-        payload = {"sessionId": "760b30", "hypothesisId": hypothesis_id, "location": "engine.py", "message": message, "data": data, "timestamp": __import__("time").time() * 1000}
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
-# #endregion
-
 # Warmup: need enough days for regime (ma_window+2) and momentum (8)
 MIN_DAYS_FOR_MOMENTUM = 8
+
+
+@dataclass(frozen=True)
+class BacktestResult:
+    """Result of a backtest run."""
+
+    equity_curve: list[tuple[int, float]]  # (timestamp_ms, equity_usd)
+    trades: list[dict[str, Any]]
+    end_portfolio: list[dict[str, Any]]  # [{"asset", "quantity", "value_usd"}, ...]
 
 
 def _default_warmup_days(strategy_params: dict[str, Any]) -> int:
@@ -115,28 +113,15 @@ def run_backtest(
     start_date_ms: int | None = None,
     end_date_ms: int | None = None,
     initial_balance_usd: float = 10_000.0,
-) -> tuple[list[tuple[int, float]], list[dict[str, Any]]]:
-    """Run backtest; return (equity_curve, trades). equity_curve = [(ts_ms, equity)], trades = list of dicts."""
+) -> tuple[list[tuple[int, float]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run backtest; returns BacktestResult(equity_curve, trades, end_portfolio)."""
     from bot.strategies import STRATEGIES
 
     if strategy_name not in STRATEGIES:
         raise ValueError(f"unknown strategy {strategy_name}; available: {list(STRATEGIES.keys())}")
 
-    # #region agent log
-    data_dir_resolved = str(Path(data_dir).resolve())
-    data_dir_exists = Path(data_dir).exists() and Path(data_dir).is_dir()
-    _debug_log("run_backtest data_dir", {"data_dir": data_dir, "data_dir_resolved": data_dir_resolved, "exists": data_dir_exists, "start_date_ms": start_date_ms, "end_date_ms": end_date_ms}, "H1")
-    # #endregion
     provider = BinanceHistoricalFileProvider(data_dir)
     pairs = discover_tradeable_pairs(data_dir)
-    # #region agent log
-    _debug_log("discover_tradeable_pairs result", {"pairs_count": len(pairs), "pairs_sample": pairs[:10]}, "H2")
-    if pairs:
-        ticker = roostoo_pair_to_binance_ticker(pairs[0])
-        path1 = Path(data_dir).joinpath("data", "spot", "daily", "klines", ticker, "1h")
-        path2 = Path(data_dir).joinpath("spot", "daily", "klines", ticker, "1h")
-        _debug_log("expected 1h path check", {"path1": str(path1), "path1_exists": path1.exists(), "path2": str(path2), "path2_exists": path2.exists()}, "H2b")
-    # #endregion
     if not pairs:
         raise ValueError(f"no tradeable pairs found under {data_dir}")
 
@@ -147,29 +132,16 @@ def run_backtest(
     had_candles_before_date_filter = False
     for pair in pairs:
         candles = provider.get_daily_klines_range(pair, end_time_ms=end_date_ms)
-        # #region agent log
-        before_filter = len(candles)
-        # #endregion
         if not candles:
-            # #region agent log
-            _debug_log("get_daily_klines_range returned empty", {"pair": pair}, "H3")
-            # #endregion
             continue
         had_candles_before_date_filter = True
         if start_date_ms is not None:
             candles = [c for c in candles if c["time"] >= start_date_ms]
         candles.sort(key=lambda c: c["time"])
-        # #region agent log
-        after_filter = len(candles)
-        _debug_log("per-pair load", {"pair": pair, "before_date_filter": before_filter, "after_date_filter": after_filter, "added_to_series": bool(candles)}, "H4")
-        # #endregion
         if candles:
             series[pair] = candles
 
     if not series:
-        # #region agent log
-        _debug_log("no series loaded", {"pairs_tried": len(pairs), "series_count": 0}, "H5")
-        # #endregion
         if had_candles_before_date_filter:
             raise ValueError(
                 "no daily data falls within the requested date range (--start-date / --end-date). "
@@ -274,11 +246,25 @@ def run_backtest(
 
         strategy.on_stop()
 
+        # Build end-of-period portfolio breakdown (asset -> quantity, value_usd)
+        end_portfolio: list[dict[str, Any]] = []
+        for asset in sorted(balance.keys()):
+            qty = get_balance_free(balance, asset)
+            if qty <= 0:
+                continue
+            if asset in ("USD", "USDT"):
+                value_usd = qty
+            else:
+                pair = f"{asset}/USD"
+                price = get_price(ticker, pair) if pair in ticker else 0.0
+                value_usd = qty * price if price > 0 else 0.0
+            end_portfolio.append({"asset": asset, "quantity": qty, "value_usd": value_usd})
+
         if equity_curve and initial_balance_usd > 0:
             equity_curve.insert(0, (timeline[warmup], initial_balance_usd))
         elif not equity_curve and initial_balance_usd > 0 and len(timeline) > warmup:
             equity_curve = [(timeline[warmup], initial_balance_usd)]
-        return equity_curve, trades
+        return BacktestResult(equity_curve, trades, end_portfolio)
     finally:
         try:
             os.unlink(db_path)
