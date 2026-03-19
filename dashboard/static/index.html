@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Roostoo Bot Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --border: #2d3a4d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --success: #3fb950;
+      --error: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 1rem 1.5rem;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.5rem; margin: 0 0 1rem 0; color: var(--text); }
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .bar .status { color: var(--muted); font-size: 0.875rem; }
+    .bar .status.ok { color: var(--success); }
+    .bar .status.err { color: var(--error); }
+    button {
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button:hover { opacity: 0.9; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+    .card h2 {
+      font-size: 0.875rem;
+      margin: 0 0 0.75rem 0;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .card .value { font-size: 1.25rem; font-weight: 600; }
+    .card.loading .value { color: var(--muted); }
+    .card.error .value { color: var(--error); }
+    .balance-list, .ticker-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      font-size: 0.875rem;
+    }
+    .balance-list li, .ticker-list li {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .balance-list li:last-child, .ticker-list li:last-child { border-bottom: none; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; }
+    .num { text-align: right; }
+    .orders-wrap { overflow-x: auto; }
+    .empty { color: var(--muted); font-style: italic; }
+    .err-msg { color: var(--error); font-size: 0.875rem; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Roostoo Bot Dashboard</h1>
+  <div class="bar">
+    <span id="status" class="status">Loading…</span>
+    <button id="refresh" type="button">Refresh</button>
+    <span id="auto-refresh" class="status" style="margin-left: auto;"></span>
+  </div>
+
+  <div class="grid">
+    <div class="card" id="card-balance">
+      <h2>Balance</h2>
+      <div id="balance" class="value">—</div>
+      <ul id="balance-list" class="balance-list" aria-label="Balance by asset"></ul>
+      <div id="balance-err" class="err-msg" hidden></div>
+    </div>
+    <div class="card" id="card-pending">
+      <h2>Pending Orders</h2>
+      <div id="pending" class="value">—</div>
+      <div id="pending-err" class="err-msg" hidden></div>
+    </div>
+    <div class="card" id="card-time">
+      <h2>Server Time</h2>
+      <div id="server-time" class="value">—</div>
+      <div id="time-err" class="err-msg" hidden></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 1rem;">
+    <h2>Ticker (BTC/USD)</h2>
+    <div id="ticker" class="value">—</div>
+    <div id="ticker-err" class="err-msg" hidden></div>
+  </div>
+
+  <div class="card">
+    <h2>Recent Orders</h2>
+    <div class="orders-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Pair</th>
+            <th>Side</th>
+            <th>Type</th>
+            <th>Quantity</th>
+            <th>Price</th>
+            <th>Status</th>
+            <th class="num">Created</th>
+          </tr>
+        </thead>
+        <tbody id="orders-body"></tbody>
+      </table>
+    </div>
+    <div id="orders-err" class="err-msg" hidden></div>
+  </div>
+
+  <script>
+    const API = '/api';
+    const REFRESH_INTERVAL_MS = 45000;
+
+    function setStatus(text, ok) {
+      const el = document.getElementById('status');
+      el.textContent = text;
+      el.className = 'status ' + (ok === true ? 'ok' : ok === false ? 'err' : '');
+    }
+
+    function setCardLoading(cardId, loading) {
+      const card = document.getElementById('card-' + cardId);
+      if (card) card.classList.toggle('loading', !!loading);
+    }
+
+    function setCardError(cardId, err) {
+      const card = document.getElementById('card-' + cardId);
+      const errEl = document.getElementById(cardId + '-err');
+      if (card) card.classList.toggle('error', !!err);
+      if (errEl) {
+        errEl.hidden = !err;
+        errEl.textContent = err ? (err.message || String(err)) : '';
+      }
+    }
+
+    async function fetchApi(path) {
+      const r = await fetch(API + path);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const d = data.detail;
+        const msg = (d && typeof d === 'object' && d.message != null) ? d.message : (typeof d === 'string' ? d : null);
+        throw new Error(msg || r.statusText || 'Request failed');
+      }
+      return data;
+    }
+
+    async function loadServerTime() {
+      setCardLoading('time', true);
+      setCardError('time', null);
+      try {
+        const data = await fetchApi('/server_time');
+        const ts = data.ServerTime ?? data.server_time ?? data.time;
+        document.getElementById('server-time').textContent = ts != null ? new Date(ts).toLocaleString() : '—';
+        return true;
+      } catch (e) {
+        setCardError('time', e);
+        document.getElementById('server-time').textContent = 'Error';
+        return false;
+      } finally {
+        setCardLoading('time', false);
+      }
+    }
+
+    async function loadBalance() {
+      setCardLoading('balance', true);
+      setCardError('balance', null);
+      try {
+        const data = await fetchApi('/balance');
+        const wallet = data.Wallet ?? data.wallet ?? data.CurrBal ?? data;
+        if (typeof wallet !== 'object' || wallet === null) {
+          document.getElementById('balance').textContent = '—';
+          document.getElementById('balance-list').innerHTML = '';
+          return true;
+        }
+        const entries = Object.entries(wallet).filter(([, v]) => v && typeof v === 'object');
+        let usd = 0;
+        entries.forEach(([asset, v]) => {
+          const free = Number(v.Free ?? v.free ?? 0) || 0;
+          const lock = Number(v.Lock ?? v.lock ?? 0) || 0;
+          if (asset === 'USD' || asset === 'USDT') usd += free + lock;
+        });
+        document.getElementById('balance').textContent = 'USD ' + (usd > 0 ? usd.toFixed(2) : '—');
+        const list = document.getElementById('balance-list');
+        list.innerHTML = entries.map(([asset, v]) => {
+          const free = Number(v.Free ?? v.free ?? 0) || 0;
+          const lock = Number(v.Lock ?? v.lock ?? 0) || 0;
+          const total = free + lock;
+          if (total === 0) return '';
+          return `<li><span>${asset}</span><span>${total.toFixed(6)}</span></li>`;
+        }).filter(Boolean).join('') || '<li class="empty">No balances</li>';
+        return true;
+      } catch (e) {
+        setCardError('balance', e);
+        document.getElementById('balance').textContent = 'Error';
+        document.getElementById('balance-list').innerHTML = '';
+        return false;
+      } finally {
+        setCardLoading('balance', false);
+      }
+    }
+
+    async function loadPendingCount() {
+      setCardLoading('pending', true);
+      setCardError('pending', null);
+      try {
+        const data = await fetchApi('/pending_count');
+        const n = data.PendingCount ?? data.pending_count ?? data.count ?? data;
+        document.getElementById('pending').textContent = typeof n === 'number' ? n : (n != null ? String(n) : '—');
+        return true;
+      } catch (e) {
+        setCardError('pending', e);
+        document.getElementById('pending').textContent = 'Error';
+        return false;
+      } finally {
+        setCardLoading('pending', false);
+      }
+    }
+
+    async function loadTicker() {
+      try {
+        const data = await fetchApi('/ticker?pair=BTC/USD');
+        const ticker = data['BTC/USD'] ?? data.BTCUSD ?? data;
+        const price = ticker?.LastPrice ?? ticker?.lastPrice ?? ticker?.Last;
+        const change = ticker?.Change ?? ticker?.change;
+        let html = price != null ? 'USD ' + Number(price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
+        if (change != null && !isNaN(change)) html += ' <span style="color: var(--muted);">(' + (Number(change) >= 0 ? '+' : '') + Number(change).toFixed(2) + '%)</span>';
+        document.getElementById('ticker').innerHTML = html;
+        document.getElementById('ticker-err').hidden = true;
+        return true;
+      } catch (e) {
+        document.getElementById('ticker').textContent = 'Error';
+        const errEl = document.getElementById('ticker-err');
+        errEl.hidden = false;
+        errEl.textContent = e.message || String(e);
+        return false;
+      }
+    }
+
+    async function loadOrders() {
+      document.getElementById('orders-err').hidden = true;
+      try {
+        const data = await fetchApi('/orders?limit=50');
+        const orders = data.Orders ?? data.orders ?? data.Data ?? data.List ?? (Array.isArray(data) ? data : []);
+        const rows = Array.isArray(orders) ? orders : [];
+        const tbody = document.getElementById('orders-body');
+        if (rows.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="empty">No orders</td></tr>';
+          return true;
+        }
+        tbody.innerHTML = rows.map(o => {
+          const pair = o.Pair ?? o.pair ?? '—';
+          const side = o.Side ?? o.side ?? '—';
+          const type = o.Type ?? o.type ?? '—';
+          const qty = o.Quantity ?? o.quantity ?? o.FilledQuantity ?? o.filledQuantity ?? '—';
+          const price = o.Price ?? o.price ?? o.FilledAverPrice ?? o.filledAverPrice ?? '—';
+          const status = o.Status ?? o.status ?? '—';
+          const ts = o.CreateTimestamp ?? o.createTimestamp ?? o.CreateTime ?? o.createTime;
+          const time = ts != null ? new Date(ts).toLocaleString() : '—';
+          return `<tr><td>${pair}</td><td>${side}</td><td>${type}</td><td>${qty}</td><td>${price}</td><td>${status}</td><td class="num">${time}</td></tr>`;
+        }).join('');
+        return true;
+      } catch (e) {
+        document.getElementById('orders-body').innerHTML = '';
+        const errEl = document.getElementById('orders-err');
+        errEl.hidden = false;
+        errEl.textContent = e.message || String(e);
+        return false;
+      }
+    }
+
+    async function refresh() {
+      document.getElementById('refresh').disabled = true;
+      setStatus('Refreshing…', null);
+      const [t, b, p, tk, o] = await Promise.all([
+        loadServerTime(),
+        loadBalance(),
+        loadPendingCount(),
+        loadTicker(),
+        loadOrders(),
+      ]);
+      const ok = t && b && p;
+      setStatus(ok ? 'Connected' : 'Some data failed. Check credentials and API.', ok);
+      document.getElementById('refresh').disabled = false;
+    }
+
+    let refreshTimer;
+    function scheduleRefresh() {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      document.getElementById('auto-refresh').textContent = 'Next refresh in ' + (REFRESH_INTERVAL_MS / 1000) + 's';
+      let left = REFRESH_INTERVAL_MS / 1000;
+      const iv = setInterval(() => {
+        left--;
+        const el = document.getElementById('auto-refresh');
+        if (el) el.textContent = left > 0 ? 'Next refresh in ' + left + 's' : 'Refreshing…';
+        if (left <= 0) clearInterval(iv);
+      }, 1000);
+      refreshTimer = setTimeout(() => { refresh(); scheduleRefresh(); }, REFRESH_INTERVAL_MS);
+    }
+
+    document.getElementById('refresh').addEventListener('click', () => { refresh(); scheduleRefresh(); });
+    refresh();
+    scheduleRefresh();
+  </script>
+</body>
+</html>
