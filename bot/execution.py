@@ -1,7 +1,9 @@
 """Translate signals to orders: validation, precision, risk guards, retries."""
 
+import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from roostoo.client import RoostooClient
@@ -67,6 +69,7 @@ class Executor:
         max_pending_orders: int | None = None,
         max_order_notional: float | None = None,
         order_spacing_sec: float | None = None,
+        trades_log_path: str | None = None,
     ) -> None:
         self._client = client
         self._dry_run = dry_run
@@ -74,6 +77,19 @@ class Executor:
         self._max_pending_orders = max_pending_orders
         self._max_order_notional = max_order_notional
         self._order_spacing_sec = order_spacing_sec
+        self._trades_log_path = trades_log_path
+
+    def _append_trade(self, record: dict[str, Any]) -> None:
+        """Append one JSONL line to trades_log_path when set."""
+        if not self._trades_log_path:
+            return
+        record.setdefault("ts", datetime.now(timezone.utc).isoformat())
+        try:
+            with open(self._trades_log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+                f.flush()
+        except OSError:
+            pass
 
     def execute(
         self,
@@ -104,11 +120,16 @@ class Executor:
         return results
 
     def _execute_cancel(self, sig: CancelOrderSignal) -> dict[str, Any]:
+        pair = _normalize_pair(sig.pair) if sig.pair else (sig.pair or "")
         if self._dry_run:
             logger.info(
                 "cancel_result order_id=%s pair=%s success=true dry_run=true",
                 sig.order_id, sig.pair,
             )
+            self._append_trade({
+                "action": "cancel", "pair": pair, "order_id": sig.order_id,
+                "success": True, "dry_run": True,
+            })
             return {"dry_run": True, "cancel": True}
 
         def _do() -> dict[str, Any]:
@@ -117,6 +138,10 @@ class Executor:
         out = self._request_with_retry(_do, "cancel")
         success = "error" not in out
         err = out.get("error", "") if not success else ""
+        self._append_trade({
+            "action": "cancel", "pair": pair, "order_id": sig.order_id,
+            "success": success, "error": err or None, "dry_run": False,
+        })
         logger.info(
             "cancel_result order_id=%s pair=%s success=%s%s",
             sig.order_id, sig.pair, success, f" error={err}" if err else "",
@@ -191,6 +216,10 @@ class Executor:
                 "order_result pair=%s side=%s qty=%s success=true dry_run=true",
                 pair, sig.side, qty,
             )
+            self._append_trade({
+                "action": "place", "pair": pair, "side": sig.side, "qty": qty,
+                "order_type": sig.order_type, "success": True, "dry_run": True,
+            })
             return {"dry_run": True, "place": True}
 
         def _do() -> dict[str, Any]:
@@ -205,6 +234,12 @@ class Executor:
         out = self._request_with_retry(_do, "place_order")
         success = "error" not in out
         err = out.get("error", "") if not success else ""
+        order_id = out.get("OrderID") or out.get("order_id") if success else None
+        self._append_trade({
+            "action": "place", "pair": pair, "side": sig.side, "qty": qty,
+            "order_type": sig.order_type, "order_id": order_id,
+            "success": success, "error": err or None, "dry_run": False,
+        })
         logger.info(
             "order_result pair=%s side=%s qty=%s success=%s%s",
             pair, sig.side, qty, success, f" error={err}" if err else "",
@@ -256,12 +291,24 @@ class Executor:
             p = _normalize_pair(pair)
             if self._dry_run:
                 logger.info("dry_run cancel all pair=%s", p)
+                self._append_trade({
+                    "action": "cancel", "pair": p, "order_id": None,
+                    "success": True, "dry_run": True,
+                })
                 results.append({"dry_run": True, "pair": p})
                 continue
             try:
                 out = self._client.cancel_order(pair=p)
                 results.append(out)
+                self._append_trade({
+                    "action": "cancel", "pair": p, "order_id": None,
+                    "success": True, "dry_run": False,
+                })
             except RoostooAPIError as e:
                 logger.warning("cancel pair=%s failed: %s", p, e.message)
+                self._append_trade({
+                    "action": "cancel", "pair": p, "order_id": None,
+                    "success": False, "error": e.message, "dry_run": False,
+                })
                 results.append({"error": e.message, "pair": p})
         return results

@@ -62,3 +62,7 @@ data/
 
 # Bot price store (strategy db_path)
 prices.db
+
+# Bot operation logs (trades and Roostoo API calls)
+trades.log
+roostoo-api.log

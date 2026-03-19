@@ -26,6 +26,9 @@ class BotSettings:
     price_store_path: str | None = None
     max_orders_per_cycle: int | None = None
     order_spacing_sec: float | None = None
+    # Log files (append-only; bot only)
+    trades_log_path: str = "trades.log"
+    roostoo_api_log_path: str = "roostoo-api.log"
 
 
 def _parse_bool(s: str | None) -> bool:
@@ -159,6 +162,9 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
         which = "live (ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY)" if live else "test (ROOSTOO_TEST_API_KEY, ROOSTOO_TEST_SECRET_KEY)"
         raise ValueError(f"Credentials are required for {which}; set in env or .env")
 
+    trades_log_path = overrides.get("trades_log_path") or os.environ.get("BOT_TRADES_LOG", "trades.log").strip() or "trades.log"
+    roostoo_api_log_path = overrides.get("roostoo_api_log_path") or os.environ.get("BOT_ROOSTOO_API_LOG", "roostoo-api.log").strip() or "roostoo-api.log"
+
     return BotSettings(
         api_key=api_key or "",
         secret_key=secret_key or "",
@@ -174,4 +180,6 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
         price_store_path=price_store_path,
         max_orders_per_cycle=max_orders_per_cycle,
         order_spacing_sec=order_spacing_sec,
+        trades_log_path=trades_log_path,
+        roostoo_api_log_path=roostoo_api_log_path,
     )

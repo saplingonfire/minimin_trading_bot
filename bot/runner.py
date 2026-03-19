@@ -56,6 +56,7 @@ def run(settings: BotSettings) -> None:
         api_key=settings.api_key,
         secret_key=settings.secret_key,
         base_url=settings.base_url,
+        api_log_path=settings.roostoo_api_log_path,
     )
 
     exchange_info: dict | None = None
@@ -79,6 +80,7 @@ def run(settings: BotSettings) -> None:
         max_pending_orders=settings.max_pending_orders,
         max_order_notional=settings.max_order_notional,
         order_spacing_sec=order_spacing_sec if isinstance(order_spacing_sec, (int, float)) else None,
+        trades_log_path=settings.trades_log_path,
     )
 
     strategy_cls = STRATEGIES[strategy_name]
