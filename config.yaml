@@ -27,3 +27,11 @@ execution:
 data:
   db_path: ./prices.db
   log_dir: ./logs/
+
+# Optional: backtest script (scripts/run_backtest.py). CLI overrides these.
+# Omit start_date/end_date to use all available OHLCV data; set them for a specific window (e.g. competition dates).
+backtest:
+  start_date: "2025-03-01"
+  end_date: "2026-03-18"
+  initial_balance: 50000
+  data_dir: "./data/binance"   # default: BINANCE_DATA_DIR env

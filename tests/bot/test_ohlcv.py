@@ -10,6 +10,8 @@ from bot.ohlcv import (
     OHLCVUnavailableError,
     BinanceHistoricalFileProvider,
     _resample_to_daily,
+    binance_ticker_to_roostoo_pair,
+    discover_tradeable_pairs,
     roostoo_pair_to_binance_ticker,
 )
 
@@ -39,6 +41,39 @@ def test_roostoo_pair_to_binance_ticker_empty() -> None:
 
 def test_roostoo_pair_to_binance_ticker_strips_whitespace() -> None:
     assert roostoo_pair_to_binance_ticker("  BTC/USD  ") == "BTCUSDT"
+
+
+# --- binance_ticker_to_roostoo_pair ---
+
+
+def test_binance_ticker_to_roostoo_pair_btc() -> None:
+    assert binance_ticker_to_roostoo_pair("BTCUSDT") == "BTC/USD"
+
+
+def test_binance_ticker_to_roostoo_pair_eth() -> None:
+    assert binance_ticker_to_roostoo_pair("ETHUSDT") == "ETH/USD"
+
+
+def test_binance_ticker_to_roostoo_pair_empty() -> None:
+    assert binance_ticker_to_roostoo_pair("") == ""
+
+
+# --- discover_tradeable_pairs ---
+
+
+def test_discover_tradeable_pairs_empty_dir(tmp_path: Path) -> None:
+    assert discover_tradeable_pairs(tmp_path) == []
+
+
+def test_discover_tradeable_pairs_finds_btc(tmp_path: Path) -> None:
+    (tmp_path / "data" / "spot" / "daily" / "klines" / "BTCUSDT" / "1h").mkdir(parents=True)
+    assert discover_tradeable_pairs(tmp_path) == ["BTC/USD"]
+
+
+def test_discover_tradeable_pairs_finds_multiple(tmp_path: Path) -> None:
+    for ticker in ("BTCUSDT", "ETHUSDT"):
+        (tmp_path / "data" / "spot" / "daily" / "klines" / ticker / "1h").mkdir(parents=True)
+    assert set(discover_tradeable_pairs(tmp_path)) == {"BTC/USD", "ETH/USD"}
 
 
 # --- _resample_to_daily ---
@@ -174,3 +209,36 @@ def test_provider_interval_1d_resamples_from_1h(tmp_path: Path) -> None:
     assert out[0]["low"] == 99.0
     assert out[0]["close"] == 102.0
     assert out[0]["volume"] == 30.0
+
+
+def test_get_daily_klines_range_returns_all_without_end_time(tmp_path: Path) -> None:
+    base = tmp_path / "data" / "spot" / "daily" / "klines" / "BTCUSDT" / "1h"
+    base.mkdir(parents=True)
+    day_ms = 24 * 3600 * 1000
+    for i in range(3):
+        t = 1704067200000 + i * day_ms
+        _write_fixture_csv(
+            base / f"BTCUSDT-1h-2024-01-{i+1:02d}.csv",
+            [{"Open time": str(t), "Open": "100", "High": "101", "Low": "99", "Close": "100.5", "Volume": "10"}],
+        )
+    provider = BinanceHistoricalFileProvider(tmp_path)
+    out = provider.get_daily_klines_range("BTC/USD", end_time_ms=None)
+    assert len(out) == 3
+    assert out[0]["close"] == 100.5
+    assert out[-1]["time"] == 1704067200000 + 2 * day_ms
+
+
+def test_get_daily_klines_range_respects_end_time_ms(tmp_path: Path) -> None:
+    base = tmp_path / "data" / "spot" / "daily" / "klines" / "BTCUSDT" / "1h"
+    base.mkdir(parents=True)
+    day_ms = 24 * 3600 * 1000
+    for i in range(3):
+        t = 1704067200000 + i * day_ms
+        _write_fixture_csv(
+            base / f"BTCUSDT-1h-2024-01-{i+1:02d}.csv",
+            [{"Open time": str(t), "Open": "100", "High": "101", "Low": "99", "Close": "100", "Volume": "10"}],
+        )
+    provider = BinanceHistoricalFileProvider(tmp_path)
+    end_after_first = 1704067200000 + day_ms
+    out = provider.get_daily_klines_range("BTC/USD", end_time_ms=end_after_first)
+    assert len(out) == 2
