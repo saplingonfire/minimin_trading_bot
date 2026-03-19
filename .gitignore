@@ -54,6 +54,9 @@ Thumbs.db
 # Cursor
 .cursor/
 
+# Debug session logs
+debug-*.log
+
 # OHLCV dumps (Binance historical data)
 data/
 
