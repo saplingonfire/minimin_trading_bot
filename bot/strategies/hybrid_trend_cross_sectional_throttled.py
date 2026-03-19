@@ -110,7 +110,7 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
             self._target_weights = {}
             return []
 
-        pairs = tradeable_pairs(context.exchange_info)
+        pairs = tradeable_pairs(context.exchange_info, exclude=self._exclude_pairs)
         portfolio_value = self._portfolio_value(context, pairs)
         if portfolio_value > self._portfolio_peak:
             self._portfolio_peak = portfolio_value

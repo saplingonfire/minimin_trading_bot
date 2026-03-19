@@ -22,6 +22,13 @@ strategy:
   order_spacing_sec: 65
   db_path: ./prices.db
 
+  # Optional: exclude pairs from the tradeable universe (e.g. memecoins or illiquid)
+  exclude_pairs: [
+    "PAXGUSDT",  # Gold peg: Uncorrelated to BTC MA20 regime
+    "SUSDT",     # Stablecoin: Zero-volatility breaks inverse-vol weighting
+    "1000CHEEMSUSDT" # Micro-cap meme: Extreme bid-ask spread risk on mock exchange
+  ]
+
   # --- Risk (hybrid + throttled): kill-switch and error halt ---
   risk:
     max_consecutive_errors: 5
@@ -54,7 +61,7 @@ data:
 # Backtest (scripts/run_backtest.py). Align with competition window / account size.
 # -----------------------------------------------------------------------------
 backtest:
-  start_date: "2025-10-01"
-  end_date: "2026-03-01"
+  start_date: "2025-03-18"
+  end_date: "2026-03-18"
   initial_balance: 50000
   data_dir: "./data/binance"

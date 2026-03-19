@@ -124,6 +124,10 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
     if not isinstance(from_env, dict):
         raise ValueError("BOT_STRATEGY_PARAMS must be a JSON object")
     strategy_params = {**yaml_strategy, **from_env}
+    # Env BOT_EXCLUDE_PAIRS overrides strategy.exclude_pairs (comma-separated)
+    exclude_env = (os.environ.get("BOT_EXCLUDE_PAIRS") or "").strip()
+    if exclude_env:
+        strategy_params["exclude_pairs"] = [p.strip() for p in exclude_env.split(",") if p.strip()]
 
     tick_seconds = overrides.get("tick_seconds")
     if tick_seconds is None:

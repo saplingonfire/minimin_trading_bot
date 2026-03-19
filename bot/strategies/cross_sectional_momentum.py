@@ -26,6 +26,7 @@ class CrossSectionalMomentumStrategy(Strategy):
         self._return_lookback_days = int(config.get("return_lookback_days", 90))
         self._ma_filter_days = int(config.get("ma_filter_days", 200))
         self._last_rebalance_ms: int | None = None
+        self._exclude_pairs: list[str] = list(config.get("exclude_pairs") or [])
 
     def on_start(self) -> None:
         self._last_rebalance_ms = None
@@ -38,7 +39,7 @@ class CrossSectionalMomentumStrategy(Strategy):
         if self._last_rebalance_ms is not None and now - self._last_rebalance_ms < REBALANCE_MS:
             return []
 
-        pairs = tradeable_pairs(context.exchange_info)
+        pairs = tradeable_pairs(context.exchange_info, exclude=self._exclude_pairs)
         if not pairs:
             return []
 

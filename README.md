@@ -118,6 +118,7 @@ Optional. Used for strategy params, execution pacing, data paths, and backtest.
 - **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec.
 - **data** — db_path (price store), log_dir.
 - **backtest** — start_date, end_date, initial_balance, data_dir.
+- **strategy.exclude_pairs** — Optional list of pairs to exclude from the tradeable universe (e.g. `["TRUMP/USD", "PENGU/USD"]`). Env override: `BOT_EXCLUDE_PAIRS` (comma-separated).
 
 See `config.yaml.example` and the in-file comments in `config.yaml`.
 

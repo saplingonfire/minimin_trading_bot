@@ -5,8 +5,32 @@ from __future__ import annotations
 from typing import Any
 
 
-def tradeable_pairs(exchange_info: dict[str, Any] | None) -> list[str]:
-    """Return list of tradeable pair symbols (e.g. BTC/USD). Returns [] if exchange_info is None."""
+def _normalize_pair_symbol(s: str) -> str:
+    """Normalize to BASE/QUOTE form (e.g. 'btc' -> 'BTC/USD', 'TRUMP/USD' -> 'TRUMP/USD')."""
+    s = s.strip().upper()
+    if not s:
+        return s
+    if "/" in s:
+        base, quote = s.split("/", 1)
+        return f"{base.strip()}/{quote.strip()}"
+    return f"{s}/USD"
+
+
+def tradeable_pairs(
+    exchange_info: dict[str, Any] | None,
+    exclude: list[str] | set[str] | None = None,
+) -> list[str]:
+    """Return list of tradeable pair symbols (e.g. BTC/USD), optionally excluding a blocklist.
+
+    Args:
+        exchange_info: API exchange info with TradePairs (or trade_pairs). CanTrade=False
+            pairs are already omitted.
+        exclude: Optional list/set of pair symbols to exclude (e.g. ["TRUMP/USD", "PENGU"]).
+            Accepts "BASE" or "BASE/QUOTE"; normalized to "BASE/QUOTE" for matching.
+
+    Returns:
+        Sorted list of pair strings not in exclude. [] if exchange_info is None.
+    """
     if not exchange_info:
         return []
     pairs = exchange_info.get("TradePairs") or exchange_info.get("trade_pairs") or {}
@@ -16,7 +40,12 @@ def tradeable_pairs(exchange_info: dict[str, Any] | None) -> list[str]:
             continue
         pair = k if "/" in str(k) else f"{str(k)}/USD"
         out.append(pair)
-    return out
+
+    if exclude:
+        exclude_set = {_normalize_pair_symbol(p) for p in exclude if p and str(p).strip()}
+        out = [p for p in out if _normalize_pair_symbol(p) not in exclude_set]
+
+    return sorted(out)
 
 
 def get_price(ticker: dict[str, Any], pair: str) -> float:

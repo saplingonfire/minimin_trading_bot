@@ -70,6 +70,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._target_weights: dict[str, float] = {}
         self._portfolio_peak: float = 0.0
         self._effective_exposure: float = 0.85
+        self._exclude_pairs: list[str] = list(config.get("exclude_pairs") or [])
 
     def on_start(self) -> None:
         self._regime = REGIME_RISK_OFF
@@ -110,7 +111,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         store = context.price_store
         if not store or not context.exchange_info:
             return []
-        pairs = tradeable_pairs(context.exchange_info)
+        pairs = tradeable_pairs(context.exchange_info, exclude=self._exclude_pairs)
         w1, w3, w7 = self._momentum_weights[0], self._momentum_weights[1], self._momentum_weights[2]
         scored: list[tuple[str, float, float]] = []
         for pair in pairs:
@@ -178,7 +179,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             self._target_weights = {}
             return []
 
-        pairs = tradeable_pairs(context.exchange_info)
+        pairs = tradeable_pairs(context.exchange_info, exclude=self._exclude_pairs)
         portfolio_value = self._portfolio_value(context, pairs)
         if portfolio_value > self._portfolio_peak:
             self._portfolio_peak = portfolio_value
