@@ -164,7 +164,9 @@ class RoostooClient:
         offset: int | None = None,
         limit: int | None = None,
     ) -> dict[str, Any]:
-        """POST /v3/query_order — query order history or pending orders (signed)."""
+        """POST /v3/query_order — query order history or pending orders (signed).
+        Per API docs, when no order matched the API returns Success: false, ErrMsg: \"no order matched\".
+        We treat that as success with empty OrderMatched list."""
         payload: dict[str, Any] = {}
         if order_id is not None:
             payload["order_id"] = str(order_id)
@@ -176,7 +178,12 @@ class RoostooClient:
             payload["offset"] = str(offset)
         if limit is not None:
             payload["limit"] = str(limit)
-        return self._request("POST", "/v3/query_order", params=payload, signed=True)
+        try:
+            return self._request("POST", "/v3/query_order", params=payload, signed=True)
+        except RoostooAPIError as e:
+            if (e.raw and e.raw.get("ErrMsg") == "no order matched") or (str(e).strip() == "no order matched"):
+                return {"Success": True, "ErrMsg": "", "OrderMatched": []}
+            raise
 
     def cancel_order(
         self,

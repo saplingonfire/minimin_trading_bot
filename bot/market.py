@@ -33,7 +33,14 @@ def build_context(
     balance = balance_resp.get("Wallet") or balance_resp.get("wallet") or balance_resp
 
     orders_resp = client.query_order(pending_only=True)
-    pending_orders = orders_resp.get("Orders") or orders_resp.get("orders") or orders_resp.get("Data") or []
+    # API returns OrderMatched when orders exist (Roostoo API docs)
+    pending_orders = (
+        orders_resp.get("OrderMatched")
+        or orders_resp.get("Orders")
+        or orders_resp.get("orders")
+        or orders_resp.get("Data")
+        or []
+    )
     if not isinstance(pending_orders, list):
         pending_orders = []
 
