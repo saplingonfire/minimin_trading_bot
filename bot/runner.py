@@ -129,9 +129,11 @@ def run(settings: BotSettings) -> None:
             except Exception as e:
                 logger.exception("build_context failed")
                 consecutive_api_errors += 1
+                # Use current time so drift check does not false-trigger when we have no context
+                server_time_ms_fallback = int(time.time() * 1000)
                 halt, force_cash = kill_switch_check(
                     consecutive_api_errors,
-                    0,
+                    server_time_ms_fallback,
                     None,
                     max_consecutive_errors=max_errors,
                     btc_daily_move_kill=btc_move_kill,
