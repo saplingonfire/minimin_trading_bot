@@ -145,6 +145,8 @@ A web dashboard at `/dashboard` lets you monitor your Roostoo account (balance, 
    ```
 4. **Open** [http://localhost:8000/dashboard](http://localhost:8000/dashboard) in your browser. The page refreshes data periodically; use the Refresh button to fetch immediately.
 
+**Deploy on Vercel:** Connect the repo in the Vercel dashboard. Build settings are in `vercel.json`: **Install Command** `pip install -r requirements.txt`, **Build Command** empty, **Output Directory** empty. The app entrypoint is set in `pyproject.toml` (`app = "dashboard.server:app"`). Add environment variables in Vercel (e.g. `ROOSTOO_TEST_API_KEY`, `ROOSTOO_TEST_SECRET_KEY`) so the dashboard can call the API.
+
 ## Tests
 
 With the repo **venv** activated:
