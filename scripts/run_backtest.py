@@ -14,6 +14,12 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(_path: str | None = None) -> bool:
+        return False
+
 from config.settings import _load_config_yaml
 from bot.backtest import run_backtest, compute_metrics, print_report
 
@@ -54,8 +60,11 @@ def main() -> int:
         default=None,
         help="Initial equity in USD (default from config backtest or 10000)",
     )
+    parser.add_argument("--env-file", default=os.path.join(_repo_root, ".env"), help="Path to .env file (default: repo root .env)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     args = parser.parse_args()
+
+    load_dotenv(args.env_file)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
