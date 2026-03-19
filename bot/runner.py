@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 _shutdown_requested = False
 
-# Strategy that needs all tickers and a price store (pair=None, append ticker each cycle)
-HYBRID_STRATEGY_NAME = "hybrid_trend_cross_sectional"
+# Strategies that need all tickers and a price store (pair=None, append ticker each cycle)
+HYBRID_LIKE_STRATEGIES = {"hybrid_trend_cross_sectional", "hybrid_trend_cross_sectional_throttled"}
 
 
 def _shutdown_handler(_signum: int, _frame: object) -> None:
@@ -67,7 +67,7 @@ def run(settings: BotSettings) -> None:
 
     max_orders_per_cycle = settings.max_orders_per_cycle
     order_spacing_sec = settings.order_spacing_sec
-    if strategy_name == HYBRID_STRATEGY_NAME:
+    if strategy_name in HYBRID_LIKE_STRATEGIES:
         if max_orders_per_cycle is None:
             max_orders_per_cycle = (settings.strategy_params or {}).get("max_orders_per_cycle", 2)
         if order_spacing_sec is None:
@@ -92,7 +92,7 @@ def run(settings: BotSettings) -> None:
         ohlcv_provider = BinanceHistoricalFileProvider(data_dir)
 
     price_store: PriceStore | None = None
-    if strategy_name == HYBRID_STRATEGY_NAME:
+    if strategy_name in HYBRID_LIKE_STRATEGIES:
         db_path = (
             settings.price_store_path
             or (settings.strategy_params or {}).get("db_path")
@@ -116,7 +116,7 @@ def run(settings: BotSettings) -> None:
         while not _shutdown_requested:
             tick_start = time.perf_counter()
             # Hybrid strategy needs all pairs; others may use a single pair from params
-            pair = None if strategy_name == HYBRID_STRATEGY_NAME else (settings.strategy_params or {}).get("pair")
+            pair = None if strategy_name in HYBRID_LIKE_STRATEGIES else (settings.strategy_params or {}).get("pair")
 
             try:
                 context = build_context(
