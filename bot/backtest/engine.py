@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from bot.base import PlaceOrderSignal, TradingContext
+from bot.base import FeeSchedule, PlaceOrderSignal, TradingContext
 from bot.ohlcv import BinanceHistoricalFileProvider, OHLCVCandle, discover_tradeable_pairs
 from bot.price_store import PriceStore
 from bot.strategies.utils import get_balance_free, get_price, parse_pair, tradeable_pairs
@@ -62,11 +62,13 @@ def _apply_fill(
     ts_ms: int,
     trades: list[dict[str, Any]],
     cost_basis: dict[str, tuple[float, float]],
+    fees: FeeSchedule | None = None,
 ) -> None:
-    """Apply a fill at given price; update balance and append to trades. Optionally compute pnl for sells."""
+    """Apply a fill at given price; update balance and append to trades. Deducts trading fees when provided."""
     if price <= 0:
         return
     base, quote = parse_pair(signal.pair)
+    fee_rate = fees.rate_for(signal.order_type) if fees else 0.0
     notional = signal.quantity * price
 
     if signal.side == "BUY":
@@ -74,24 +76,26 @@ def _apply_fill(
         spend = min(notional, free_usd)
         if spend <= 0:
             return
-        qty = spend / price
+        fee = spend * fee_rate
+        qty = (spend - fee) / price
         balance.setdefault("USD", {"Free": 0.0, "Lock": 0.0})["Free"] = (
             get_balance_free(balance, "USD") - spend
         )
         balance.setdefault(base, {"Free": 0.0, "Lock": 0.0})["Free"] = (
             get_balance_free(balance, base) + qty
         )
-        # Cost basis: (total_cost, total_qty)
         cb_cost, cb_qty = cost_basis.get(base, (0.0, 0.0))
         cost_basis[base] = (cb_cost + spend, cb_qty + qty)
-        trades.append({"ts_ms": ts_ms, "pair": signal.pair, "side": "BUY", "quantity": qty, "price": price, "notional_usd": spend})
-        logger.info("fill BUY %s qty=%.6g @ %.2f notional=%.2f USD", signal.pair, qty, price, spend)
+        trades.append({"ts_ms": ts_ms, "pair": signal.pair, "side": "BUY", "quantity": qty, "price": price, "notional_usd": spend, "fee": fee})
+        logger.info("fill BUY %s qty=%.6g @ %.2f notional=%.2f fee=%.4f USD", signal.pair, qty, price, spend, fee)
     else:
         free_base = get_balance_free(balance, base)
         sell_qty = min(signal.quantity, free_base)
         if sell_qty <= 0:
             return
-        proceeds = sell_qty * price
+        gross_proceeds = sell_qty * price
+        fee = gross_proceeds * fee_rate
+        proceeds = gross_proceeds - fee
         balance.setdefault(base, {"Free": 0.0, "Lock": 0.0})["Free"] = get_balance_free(balance, base) - sell_qty
         balance.setdefault("USD", {"Free": 0.0, "Lock": 0.0})["Free"] = get_balance_free(balance, "USD") + proceeds
         cb_cost, cb_qty = cost_basis.get(base, (0.0, 0.0))
@@ -100,11 +104,11 @@ def _apply_fill(
             cost_alloc = cb_cost * (sell_qty / cb_qty)
             pnl = proceeds - cost_alloc
             cost_basis[base] = (cb_cost - cost_alloc, cb_qty - sell_qty)
-        rec: dict[str, Any] = {"ts_ms": ts_ms, "pair": signal.pair, "side": "SELL", "quantity": sell_qty, "price": price, "notional_usd": proceeds}
+        rec: dict[str, Any] = {"ts_ms": ts_ms, "pair": signal.pair, "side": "SELL", "quantity": sell_qty, "price": price, "notional_usd": proceeds, "fee": fee}
         if pnl is not None:
             rec["pnl"] = pnl
         trades.append(rec)
-        logger.info("fill SELL %s qty=%.6g @ %.2f notional=%.2f USD pnl=%s", signal.pair, sell_qty, price, proceeds, pnl if pnl is not None else "n/a")
+        logger.info("fill SELL %s qty=%.6g @ %.2f notional=%.2f fee=%.4f USD pnl=%s", signal.pair, sell_qty, price, proceeds, fee, pnl if pnl is not None else "n/a")
 
 
 def run_backtest(
@@ -208,6 +212,11 @@ def run_backtest(
             if ticker_snap:
                 price_store.append_ticker_snapshot(ticker_snap, day_ts)
 
+        fees = FeeSchedule(
+            market_rate=float(strategy_params.get("fee_market_rate", 0.001)),
+            limit_rate=float(strategy_params.get("fee_limit_rate", 0.0005)),
+        )
+
         strategy_cls = STRATEGIES[strategy_name]
         strategy = strategy_cls(strategy_params)
         strategy.on_start()
@@ -249,7 +258,7 @@ def run_backtest(
             for sig in signals:
                 if isinstance(sig, PlaceOrderSignal):
                     price = get_price(ticker, sig.pair)
-                    _apply_fill(balance, sig, price, day_ts, trades, cost_basis)
+                    _apply_fill(balance, sig, price, day_ts, trades, cost_basis, fees)
 
             price_store.append_ticker_snapshot(ticker, day_ts)
 

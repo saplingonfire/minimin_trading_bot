@@ -116,6 +116,8 @@ def compute_metrics(
             wins = sum(1 for p in pnls if p > 0)
             win_rate_pct = (wins / len(pnls)) * 100.0
 
+    total_fees = sum(float(t.get("fee", 0)) for t in trades)
+
     return {
         "start_equity": start_equity,
         "end_equity": end_equity,
@@ -125,6 +127,7 @@ def compute_metrics(
         "max_drawdown_pct": max_dd,
         "num_trades": num_trades,
         "win_rate_pct": win_rate_pct,
+        "total_fees_usd": total_fees,
         "start_time_ms": t0,
         "end_time_ms": t1,
     }
@@ -156,6 +159,8 @@ def print_report(
     if metrics.get("sharpe_annual") is not None:
         lines.append(f"  Sharpe (ann.):  {metrics['sharpe_annual']:.2f}")
     lines.append(f"  Trades:        {metrics['num_trades']}")
+    if metrics.get("total_fees_usd") is not None and metrics["total_fees_usd"] > 0:
+        lines.append(f"  Total fees:    {metrics['total_fees_usd']:,.2f} USD")
     if metrics.get("win_rate_pct") is not None:
         lines.append(f"  Win rate:       {metrics['win_rate_pct']:.1f}%")
     breakdown = portfolio_breakdown if portfolio_breakdown is not None else metrics.get("portfolio_breakdown")

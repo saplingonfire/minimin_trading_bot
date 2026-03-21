@@ -95,6 +95,12 @@ def main() -> int:
     if args.exclude_pairs and args.exclude_pairs.strip():
         strategy_params["exclude_pairs"] = [p.strip() for p in args.exclude_pairs.split(",") if p.strip()]
 
+    # Inject fee rates from execution.fees (same as load_settings for live bot)
+    execution_section = (yaml_config or {}).get("execution") or {}
+    fees_section = (execution_section.get("fees") or {}) if execution_section else {}
+    strategy_params.setdefault("fee_market_rate", int(fees_section.get("market_bps", 10)) / 10_000)
+    strategy_params.setdefault("fee_limit_rate", int(fees_section.get("limit_bps", 5)) / 10_000)
+
     data_dir = (args.data_dir or backtest_section.get("data_dir") or "").strip()
     if not data_dir:
         logging.error("data-dir is required; set BINANCE_DATA_DIR or use --data-dir")
