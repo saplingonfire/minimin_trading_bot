@@ -6,13 +6,15 @@ from typing import Any
 
 
 def _normalize_pair_symbol(s: str) -> str:
-    """Normalize to BASE/QUOTE form (e.g. 'btc' -> 'BTC/USD', 'TRUMP/USD' -> 'TRUMP/USD')."""
+    """Normalize to BASE/QUOTE form. Accepts Binance tickers (BTCUSDT), base-only (BTC), or Roostoo (BTC/USD)."""
     s = s.strip().upper()
     if not s:
         return s
     if "/" in s:
         base, quote = s.split("/", 1)
         return f"{base.strip()}/{quote.strip()}"
+    if s.endswith("USDT"):
+        return f"{s[:-4]}/USD"
     return f"{s}/USD"
 
 

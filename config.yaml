@@ -26,7 +26,7 @@ strategy:
   exclude_pairs: [
     "PAXGUSDT",  # Gold peg: Uncorrelated to BTC MA20 regime
     "SUSDT",     # Stablecoin: Zero-volatility breaks inverse-vol weighting
-    "1000CHEEMSUSDT" # Micro-cap meme: Extreme bid-ask spread risk on mock exchange
+    "1000CHEEMSUSDT", # Micro-cap meme: Extreme bid-ask spread risk on mock exchange
   ]
 
   # --- Risk (hybrid + throttled): kill-switch and error halt ---
