@@ -18,7 +18,7 @@ except ImportError:
         return False
 
 from config.settings import load_settings
-from bot.runner import run
+from bot.runner import run, HYBRID_LIKE_STRATEGIES
 
 
 def main() -> int:
@@ -30,6 +30,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Do not place/cancel real orders")
     parser.add_argument("--tick-seconds", type=int, help="Seconds between ticks (overrides BOT_TICK_SECONDS)")
     parser.add_argument("--env-file", default=".env", help="Path to .env file (default: .env)")
+    parser.add_argument("--skip-warmup", action="store_true", help="Skip automatic price store warmup from Binance")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -59,6 +60,15 @@ def main() -> int:
     except ValueError as e:
         logging.error("config error: %s", e)
         return 1
+
+    if not args.skip_warmup and settings.strategy_name in HYBRID_LIKE_STRATEGIES:
+        db_path = (
+            settings.price_store_path
+            or (settings.strategy_params or {}).get("db_path")
+            or "prices.db"
+        )
+        from scripts.warmup_price_store import warmup_all
+        warmup_all(db_path=db_path)
 
     try:
         run(settings)

@@ -39,6 +39,7 @@ minimin_trading_bot/
 │   ├── run_bot.py        # Main entrypoint: run bot with --strategy, --live/--test, --dry-run
 │   ├── run_backtest.py   # Backtest from config + Binance data
 │   ├── sync_binance_historical.py  # Download Binance OHLCV (Roostoo universe or --tickers)
+│   ├── warmup_price_store.py  # Backfill prices.db from Binance daily klines (auto-run by run_bot.py)
 │   ├── setup_venv.sh     # Create venv and install deps (macOS/Linux)
 │   └── setup_venv.bat    # Windows
 ├── config.yaml           # Strategy params, execution, data paths, backtest (see config.yaml.example)
@@ -143,8 +144,15 @@ python scripts/run_bot.py --strategy hybrid_trend_cross_sectional [--test] [--dr
 - `--test` — Use test credentials (default).
 - `--dry-run` — Do not place or cancel orders; log only.
 - `--tick-seconds` — Override tick interval.
+- `--skip-warmup` — Skip automatic Binance price store warmup (see below).
 - `--env-file` — Path to `.env` (default `.env`).
 - `-v` — Verbose logging.
+
+**Price store warmup:** For hybrid strategies, `run_bot.py` automatically backfills `prices.db` with ~30 days of daily closes for all Roostoo-universe symbols from the Binance public klines API. This makes the bot operational from tick 1 (momentum ranking needs 8 daily closes, BTC regime needs 20). Symbols that already have enough history are skipped. Use `--skip-warmup` to disable. You can also run it standalone:
+
+```bash
+python scripts/warmup_price_store.py [--db-path prices.db] [--days 30] [--tickers BTC,ETH,SOL]
+```
 
 **Strategies:**
 
