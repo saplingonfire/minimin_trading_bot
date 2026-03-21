@@ -64,6 +64,8 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._min_days_history = int(config.get("min_days_history", 3))
         self._rank_interval_min = int(config.get("rank_interval_min", 60))
         self._regime_utc_hour = int(config.get("regime_utc_hour", 0))
+        self._min_rebalance_pct = float(config.get("min_rebalance_pct", 0.02))
+        self._pair_cooldown_min = int(config.get("pair_cooldown_min", 30))
         self._regime: str = REGIME_RISK_OFF
         self._regime_candidate: str | None = None
         self._last_regime_eval_day: int | None = None
@@ -71,6 +73,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._target_weights: dict[str, float] = {}
         self._portfolio_peak: float = 0.0
         self._effective_exposure: float = 0.85
+        self._last_trade_time: dict[str, int] = {}
         self._exclude_pairs: list[str] = list(config.get("exclude_pairs") or [])
         self._fees = FeeSchedule(
             market_rate=float(config.get("fee_market_rate", 0.001)),
@@ -85,6 +88,18 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._target_weights = {}
         self._portfolio_peak = 0.0
         self._effective_exposure = self._target_exposure
+        self._last_trade_time = {}
+
+    def _is_pair_on_cooldown(self, pair: str, now_ms: int) -> bool:
+        if self._pair_cooldown_min <= 0:
+            return False
+        last = self._last_trade_time.get(pair)
+        if last is None:
+            return False
+        return (now_ms - last) < self._pair_cooldown_min * 60 * 1000
+
+    def _record_trade(self, pair: str, now_ms: int) -> None:
+        self._last_trade_time[pair] = now_ms
 
     def _is_daily_regime_time(self, server_time_ms: int) -> bool:
         """True if we should re-evaluate regime (once per UTC day)."""
@@ -217,9 +232,12 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         for pair, w in self._target_weights.items():
             target_usd[pair] = portfolio_value * w
 
+        now = context.server_time_ms
         sell_signals: list[Signal] = []
         buy_signals: list[Signal] = []
         for pair in self._target_weights:
+            if self._is_pair_on_cooldown(pair, now):
+                continue
             base, _ = parse_pair(pair)
             price = get_price(context.ticker, pair)
             if price <= 0:
@@ -229,19 +247,22 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             target = target_usd.get(pair, 0.0)
             delta_usd = target - current_value
             fee_threshold = current_value * self._fees.round_trip("MARKET")
-            if abs(delta_usd) < max(self._min_trade_usd, fee_threshold):
+            pct_threshold = target * self._min_rebalance_pct if target > 0 else 0.0
+            if abs(delta_usd) < max(self._min_trade_usd, fee_threshold, pct_threshold):
                 continue
             qty = abs(delta_usd) / price
             if delta_usd < 0:
                 to_sell = min(qty, current_qty)
                 if to_sell > 0:
                     sell_signals.append(PlaceOrderSignal(pair, "SELL", to_sell, "MARKET", None))
+                    self._record_trade(pair, now)
             else:
                 quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
                 spend = min(delta_usd, quote_free)
                 if spend >= self._min_trade_usd and spend > 0:
                     buy_qty = spend / (price * (1 + self._fees.market_rate))
                     buy_signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
+                    self._record_trade(pair, now)
 
         return sell_signals + buy_signals
 

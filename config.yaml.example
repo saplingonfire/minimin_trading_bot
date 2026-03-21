@@ -15,6 +15,13 @@ strategy:
   max_weight_per_coin: 0.20
   # Minimum notional (USD) per trade; smaller deltas are skipped.
   min_trade_usd: 50.0
+  # Minimum rebalance delta as fraction of target allocation (e.g. 0.02 = 2%).
+  # Prevents churn from noise-level deviations that exceed min_trade_usd but are
+  # too small relative to position size to justify the round-trip cost.
+  min_rebalance_pct: 0.02
+  # Per-pair cooldown in minutes after a trade before the same pair can be traded again.
+  # Prevents buy-then-sell whipsaw across consecutive tick cycles.
+  pair_cooldown_min: 30
   # Minimum 24h USD volume for a pair to be eligible for ranking.
   min_volume_usd: 500000
   # Minimum coin price (USD) to be eligible; filters out micro-priced tokens.

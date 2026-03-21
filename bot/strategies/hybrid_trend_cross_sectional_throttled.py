@@ -147,6 +147,8 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
         sell_signals: list[Signal] = []
         buy_signals: list[Signal] = []
         for pair in self._target_weights:
+            if self._is_pair_on_cooldown(pair, now):
+                continue
             base, _ = parse_pair(pair)
             price = get_price(context.ticker, pair)
             if price <= 0:
@@ -156,18 +158,21 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
             target = target_usd.get(pair, 0.0)
             delta_usd = target - current_value
             fee_threshold = current_value * self._fees.round_trip("MARKET")
-            if abs(delta_usd) < max(self._min_trade_usd, fee_threshold):
+            pct_threshold = target * self._min_rebalance_pct if target > 0 else 0.0
+            if abs(delta_usd) < max(self._min_trade_usd, fee_threshold, pct_threshold):
                 continue
             qty = abs(delta_usd) / price
             if delta_usd < 0:
                 to_sell = min(qty, current_qty)
                 if to_sell > 0:
                     sell_signals.append(PlaceOrderSignal(pair, "SELL", to_sell, "MARKET", None))
+                    self._record_trade(pair, now)
             else:
                 quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
                 spend = min(delta_usd, quote_free)
                 if spend >= self._min_trade_usd and spend > 0:
                     buy_qty = spend / (price * (1 + self._fees.market_rate))
                     buy_signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
+                    self._record_trade(pair, now)
 
         return sell_signals + buy_signals
