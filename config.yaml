@@ -8,11 +8,11 @@
 
 strategy:
   # --- hybrid_trend_cross_sectional + hybrid_trend_cross_sectional_throttled (shared) ---
-  N: 4
+  N: 5
   ma_window: 20
   momentum_weights: [0.2, 0.3, 0.5]
   target_exposure: 0.80
-  max_weight_per_coin: 0.25
+  max_weight_per_coin: 0.20
   min_trade_usd: 25.0
   min_volume_usd: 500000
   min_price_usd: 0.10
