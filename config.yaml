@@ -19,7 +19,7 @@ strategy:
   rank_interval_min: 60
   regime_utc_hour: 0
   max_orders_per_cycle: 2
-  order_spacing_sec: 65
+  order_spacing_sec: 30
   db_path: ./prices.db
 
   # Optional: exclude pairs from the tradeable universe (e.g. memecoins or illiquid)
@@ -48,7 +48,7 @@ strategy:
 execution:
   cycle_sec: 300
   max_orders_per_cycle: 2
-  order_spacing_sec: 65
+  order_spacing_sec: 30
 
 # -----------------------------------------------------------------------------
 # Data paths (price store, logs)
