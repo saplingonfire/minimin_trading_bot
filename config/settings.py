@@ -26,9 +26,9 @@ class BotSettings:
     price_store_path: str | None = None
     max_orders_per_cycle: int | None = None
     order_spacing_sec: float | None = None
-    # Log files (append-only; bot only)
-    trades_log_path: str = "trades.log"
-    roostoo_api_log_path: str = "roostoo-api.log"
+    # Log files (append-only; bot only); defaults match test account when unset in load_settings
+    trades_log_path: str = "trades-test.log"
+    roostoo_api_log_path: str = "roostoo-api-test.log"
 
 
 def _parse_bool(s: str | None) -> bool:
@@ -55,6 +55,25 @@ def _parse_float(s: str | None) -> float | None:
         return None
 
 
+def _resolve_append_log_path(
+    override: str | None,
+    env_val: str | None,
+    live: bool,
+    log_dir: str | None,
+    stem: str,
+) -> str:
+    """CLI override, then env, else trades-{live|test}.log under optional log_dir."""
+    if override and str(override).strip():
+        return str(Path(str(override).strip()))
+    if env_val is not None and env_val.strip():
+        return env_val.strip()
+    suffix = "live" if live else "test"
+    basename = f"{stem}-{suffix}.log"
+    if log_dir and log_dir.strip():
+        return str(Path(log_dir.strip()) / basename)
+    return basename
+
+
 def _load_config_yaml(path: str | Path = "config.yaml") -> dict[str, Any]:
     """Load optional config.yaml; return empty dict if missing or invalid."""
     try:
@@ -78,6 +97,7 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
     yaml_config = _load_config_yaml(os.environ.get("BOT_CONFIG_PATH", "config.yaml"))
     yaml_strategy: dict[str, Any] = {}
     fees_yaml: dict[str, Any] = {}
+    log_dir_from_yaml: str | None = None
     if yaml_config:
         yaml_strategy = yaml_config.get("strategy") or {}
         execution_yaml = yaml_config.get("execution") or {}
@@ -89,6 +109,9 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
             overrides.setdefault("order_spacing_sec", execution_yaml.get("order_spacing_sec"))
         if data_yaml:
             overrides.setdefault("price_store_path", data_yaml.get("db_path"))
+            raw_ld = data_yaml.get("log_dir")
+            if isinstance(raw_ld, str) and raw_ld.strip():
+                log_dir_from_yaml = raw_ld.strip()
 
     live = overrides.get("live")
     if live is None:
@@ -176,8 +199,20 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
         which = "live (ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY)" if live else "test (ROOSTOO_TEST_API_KEY, ROOSTOO_TEST_SECRET_KEY)"
         raise ValueError(f"Credentials are required for {which}; set in env or .env")
 
-    trades_log_path = overrides.get("trades_log_path") or os.environ.get("BOT_TRADES_LOG", "trades.log").strip() or "trades.log"
-    roostoo_api_log_path = overrides.get("roostoo_api_log_path") or os.environ.get("BOT_ROOSTOO_API_LOG", "roostoo-api.log").strip() or "roostoo-api.log"
+    trades_log_path = _resolve_append_log_path(
+        overrides.get("trades_log_path"),
+        os.environ.get("BOT_TRADES_LOG"),
+        live,
+        log_dir_from_yaml,
+        "trades",
+    )
+    roostoo_api_log_path = _resolve_append_log_path(
+        overrides.get("roostoo_api_log_path"),
+        os.environ.get("BOT_ROOSTOO_API_LOG"),
+        live,
+        log_dir_from_yaml,
+        "roostoo-api",
+    )
 
     return BotSettings(
         api_key=api_key or "",

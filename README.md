@@ -108,6 +108,7 @@ Copy `.env.example` to `.env` and set:
   - `BOT_CONFIG_PATH` — Path to YAML config (default `config.yaml`).
   - Optional: `BOT_STRATEGY_PARAMS` (JSON) to override strategy params; usually strategy params come from `config.yaml`.
   - Optional: `BOT_PRICE_STORE_PATH` or set in config `data.db_path` for hybrid strategies (SQLite price history).
+  - **Append-only JSONL logs (trades + Roostoo API metadata):** By default, paths depend on account mode: `trades-test.log` / `roostoo-api-test.log` for test, `trades-live.log` / `roostoo-api-live.log` for live. Set `BOT_TRADES_LOG` and/or `BOT_ROOSTOO_API_LOG` to override with a fixed path (e.g. `BOT_TRADES_LOG=trades.log` for the previous single-file behavior). If `data.log_dir` is set in `config.yaml`, default basenames are written under that directory.
   - Optional: `BOT_MAX_ORDERS_PER_CYCLE`, `BOT_ORDER_SPACING_SEC` (or in config execution).
   - Optional risk: `BOT_MAX_PENDING_ORDERS`, `BOT_MAX_ORDER_NOTIONAL`.
 - **OHLCV (strategies that need candles):** `BINANCE_DATA_DIR` — Path to Binance CSV dump (e.g. `data/binance`). If unset, strategies that require OHLCV will no-op.
@@ -118,7 +119,7 @@ Optional. Used for strategy params, execution pacing, data paths, and backtest.
 
 - **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, min_price_usd, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
 - **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec, **fees** (market_bps, limit_bps — trading fee rates in basis points, automatically injected into strategy params).
-- **data** — db_path (price store), log_dir.
+- **data** — db_path (price store), log_dir (optional directory for default trade/API JSONL logs when `BOT_TRADES_LOG` / `BOT_ROOSTOO_API_LOG` are unset).
 - **backtest** — start_date, end_date, initial_balance, data_dir.
 - **strategy.exclude_pairs** — Optional list of pairs to exclude from the tradeable universe (e.g. `["TRUMP/USD", "PENGU/USD"]`). Env override: `BOT_EXCLUDE_PAIRS` (comma-separated).
 

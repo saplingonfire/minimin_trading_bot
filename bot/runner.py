@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 import time
+from pathlib import Path
 
 from roostoo.client import RoostooClient
 
@@ -51,6 +52,9 @@ def run(settings: BotSettings) -> None:
         settings.tick_seconds,
         settings.cancel_orders_on_stop,
     )
+
+    for _log_path in (settings.trades_log_path, settings.roostoo_api_log_path):
+        Path(_log_path).parent.mkdir(parents=True, exist_ok=True)
 
     client = RoostooClient(
         api_key=settings.api_key,

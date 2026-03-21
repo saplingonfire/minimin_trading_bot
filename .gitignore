@@ -63,6 +63,9 @@ data/
 # Bot price store (strategy db_path)
 prices.db
 
-# Bot operation logs (trades and Roostoo API calls)
+# Bot operation logs (trades and Roostoo API calls; JSONL append-only)
 trades.log
+trades-*.log
 roostoo-api.log
+roostoo-api-*.log
+logs/

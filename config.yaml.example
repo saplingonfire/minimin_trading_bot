@@ -70,5 +70,5 @@ data:
   db_path: ./prices.db
   # Optional warmup source for initial BTC history (e.g. binance).
   warmup_source: binance
-  # Directory for log files (if used by runner).
+  # Directory for default trade/API JSONL logs when BOT_TRADES_LOG / BOT_ROOSTOO_API_LOG are unset.
   log_dir: ./logs/
