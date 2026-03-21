@@ -63,6 +63,9 @@ data/
 # Bot price store (strategy db_path)
 prices.db
 
+# Markdown docs in repo root (strategy writeups, notes)
+/*.md
+
 # Bot operation logs (trades and Roostoo API calls; JSONL append-only)
 trades.log
 trades-*.log
