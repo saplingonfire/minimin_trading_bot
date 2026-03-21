@@ -2,6 +2,7 @@
 
 from bot.base import (
     CancelOrderSignal,
+    FeeSchedule,
     PlaceOrderSignal,
     Signal,
     Strategy,
@@ -10,6 +11,7 @@ from bot.base import (
 
 __all__ = [
     "CancelOrderSignal",
+    "FeeSchedule",
     "PlaceOrderSignal",
     "Signal",
     "Strategy",

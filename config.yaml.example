@@ -42,6 +42,10 @@ execution:
   max_orders_per_cycle: 2
   # Seconds to wait between placing orders within a cycle.
   order_spacing_sec: 65
+  # Trading fees in basis points (1 bps = 0.01%). Used for dead-zone filter and buy qty adjustment.
+  fees:
+    market_bps: 10   # 0.1% per market order
+    limit_bps: 5     # 0.05% per limit order
 
 # Global risk / kill-switch settings (used by runner).
 risk:

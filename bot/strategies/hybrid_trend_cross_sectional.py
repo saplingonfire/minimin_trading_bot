@@ -6,7 +6,7 @@ import logging
 import math
 from typing import Any
 
-from bot.base import PlaceOrderSignal, Signal, Strategy, TradingContext
+from bot.base import FeeSchedule, PlaceOrderSignal, Signal, Strategy, TradingContext
 from bot.price_store import BTC_PAIR, MS_PER_DAY
 from bot.regime import REGIME_RISK_OFF, REGIME_RISK_ON, compute_regime
 from bot.risk import get_drawdown_exposure, should_restore_exposure
@@ -72,6 +72,10 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._portfolio_peak: float = 0.0
         self._effective_exposure: float = 0.85
         self._exclude_pairs: list[str] = list(config.get("exclude_pairs") or [])
+        self._fees = FeeSchedule(
+            market_rate=float(config.get("fee_market_rate", 0.001)),
+            limit_rate=float(config.get("fee_limit_rate", 0.0005)),
+        )
 
     def on_start(self) -> None:
         self._regime = REGIME_RISK_OFF
@@ -224,7 +228,8 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             current_value = current_qty * price
             target = target_usd.get(pair, 0.0)
             delta_usd = target - current_value
-            if abs(delta_usd) < self._min_trade_usd:
+            fee_threshold = current_value * self._fees.round_trip("MARKET")
+            if abs(delta_usd) < max(self._min_trade_usd, fee_threshold):
                 continue
             qty = abs(delta_usd) / price
             if delta_usd < 0:
@@ -235,7 +240,8 @@ class HybridTrendCrossSectionalStrategy(Strategy):
                 quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
                 spend = min(delta_usd, quote_free)
                 if spend >= self._min_trade_usd and spend > 0:
-                    buy_signals.append(PlaceOrderSignal(pair, "BUY", spend / price, "MARKET", None))
+                    buy_qty = spend / (price * (1 + self._fees.market_rate))
+                    buy_signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
 
         return sell_signals + buy_signals
 

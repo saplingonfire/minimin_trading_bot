@@ -50,6 +50,9 @@ execution:
   cycle_sec: 300
   max_orders_per_cycle: 2
   order_spacing_sec: 30
+  fees:
+    market_bps: 10
+    limit_bps: 5
 
 # -----------------------------------------------------------------------------
 # Data paths (price store, logs)

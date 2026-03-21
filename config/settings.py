@@ -77,10 +77,12 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
     overrides = dict(cli_overrides) if cli_overrides else {}
     yaml_config = _load_config_yaml(os.environ.get("BOT_CONFIG_PATH", "config.yaml"))
     yaml_strategy: dict[str, Any] = {}
+    fees_yaml: dict[str, Any] = {}
     if yaml_config:
         yaml_strategy = yaml_config.get("strategy") or {}
         execution_yaml = yaml_config.get("execution") or {}
         data_yaml = yaml_config.get("data") or {}
+        fees_yaml = (execution_yaml.get("fees") or {}) if execution_yaml else {}
         if execution_yaml:
             overrides.setdefault("tick_seconds", execution_yaml.get("cycle_sec"))
             overrides.setdefault("max_orders_per_cycle", execution_yaml.get("max_orders_per_cycle"))
@@ -128,6 +130,14 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
     exclude_env = (os.environ.get("BOT_EXCLUDE_PAIRS") or "").strip()
     if exclude_env:
         strategy_params["exclude_pairs"] = [p.strip() for p in exclude_env.split(",") if p.strip()]
+
+    # Inject fee rates (bps -> fractional) from execution.fees into strategy_params
+    strategy_params.setdefault(
+        "fee_market_rate", int(fees_yaml.get("market_bps", 10)) / 10_000,
+    )
+    strategy_params.setdefault(
+        "fee_limit_rate", int(fees_yaml.get("limit_bps", 5)) / 10_000,
+    )
 
     tick_seconds = overrides.get("tick_seconds")
     if tick_seconds is None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from bot.base import PlaceOrderSignal, Signal, Strategy, TradingContext
+from bot.base import FeeSchedule, PlaceOrderSignal, Signal, Strategy, TradingContext
 from bot.indicators import sma
 from bot.ohlcv import OHLCVUnavailableError
 from bot.strategies.utils import get_balance_free, get_price, parse_pair, tradeable_pairs
@@ -27,6 +27,10 @@ class CrossSectionalMomentumStrategy(Strategy):
         self._ma_filter_days = int(config.get("ma_filter_days", 200))
         self._last_rebalance_ms: int | None = None
         self._exclude_pairs: list[str] = list(config.get("exclude_pairs") or [])
+        self._fees = FeeSchedule(
+            market_rate=float(config.get("fee_market_rate", 0.001)),
+            limit_rate=float(config.get("fee_limit_rate", 0.0005)),
+        )
 
     def on_start(self) -> None:
         self._last_rebalance_ms = None
@@ -100,13 +104,15 @@ class CrossSectionalMomentumStrategy(Strategy):
             current_value = get_balance_free(context.balance, base) * price
             target_value = portfolio_value * weights.get(pair, 0)
             diff = target_value - current_value
-            if abs(diff) < price * 0.001:
+            fee_threshold = current_value * self._fees.round_trip("MARKET")
+            if abs(diff) < max(fee_threshold, price * 0.001):
                 continue
             qty = abs(diff) / price
             if diff > 0:
                 spend = min(diff, quote_balance)
                 if spend > 0 and spend >= price * 0.0001:
-                    signals.append(PlaceOrderSignal(pair, "BUY", spend / price, "MARKET", None))
+                    buy_qty = spend / (price * (1 + self._fees.market_rate))
+                    signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
                     quote_balance -= spend
             else:
                 to_sell = min(qty, get_balance_free(context.balance, base))

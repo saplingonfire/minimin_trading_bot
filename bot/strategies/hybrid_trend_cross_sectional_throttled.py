@@ -155,7 +155,8 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
             current_value = current_qty * price
             target = target_usd.get(pair, 0.0)
             delta_usd = target - current_value
-            if abs(delta_usd) < self._min_trade_usd:
+            fee_threshold = current_value * self._fees.round_trip("MARKET")
+            if abs(delta_usd) < max(self._min_trade_usd, fee_threshold):
                 continue
             qty = abs(delta_usd) / price
             if delta_usd < 0:
@@ -166,6 +167,7 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
                 quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
                 spend = min(delta_usd, quote_free)
                 if spend >= self._min_trade_usd and spend > 0:
-                    buy_signals.append(PlaceOrderSignal(pair, "BUY", spend / price, "MARKET", None))
+                    buy_qty = spend / (price * (1 + self._fees.market_rate))
+                    buy_signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
 
         return sell_signals + buy_signals

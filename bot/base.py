@@ -34,6 +34,21 @@ Signal = PlaceOrderSignal | CancelOrderSignal
 
 
 @dataclass(frozen=True)
+class FeeSchedule:
+    """Exchange fee rates for order cost estimation. Rates are fractional (0.001 = 0.1% = 10 bps)."""
+
+    market_rate: float = 0.001
+    limit_rate: float = 0.0005
+
+    def rate_for(self, order_type: str) -> float:
+        return self.limit_rate if order_type == "LIMIT" else self.market_rate
+
+    def round_trip(self, order_type: str) -> float:
+        """Buy fee + sell fee for the same order type."""
+        return 2 * self.rate_for(order_type)
+
+
+@dataclass(frozen=True)
 class TradingContext:
     """Read-only snapshot of market and account for strategy.next()."""
 
