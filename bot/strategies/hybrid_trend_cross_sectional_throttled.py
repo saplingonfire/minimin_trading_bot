@@ -133,7 +133,10 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
         if self._is_daily_regime_time(now):
             self._compute_regime(context)
 
-        if self._should_rerank(now):
+        _needs_rerank = self._should_rerank(now)
+        if not _needs_rerank and self._effective_exposure > 0 and self._target_weights and all(w == 0.0 for w in self._target_weights.values()):
+            _needs_rerank = True
+        if _needs_rerank:
             self._target_weights = self._compute_target_weights(context)
             self._last_rank_time_ms = now
 
