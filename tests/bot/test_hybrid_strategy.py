@@ -25,7 +25,7 @@ def test_hybrid_returns_empty_without_price_store() -> None:
 
 
 def test_hybrid_returns_empty_when_risk_force_cash() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         store = PriceStore(Path(tmp) / "prices.db")
         for i in range(25):
             store.insert_daily_rows([("BTC/USD", (1000 + i) * MS_PER_DAY, 40000.0 + i * 100)])
@@ -46,7 +46,7 @@ def test_hybrid_returns_empty_when_risk_force_cash() -> None:
 
 def test_hybrid_momentum_score_ordering() -> None:
     """Smoke test: strategy with minimal store and one tradeable pair computes without error."""
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         store = PriceStore(Path(tmp) / "prices.db")
         # 8+ days for BTC and one other so we have momentum
         base = 1000 * MS_PER_DAY

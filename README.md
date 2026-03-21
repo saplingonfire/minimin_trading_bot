@@ -107,7 +107,7 @@ Copy `.env.example` to `.env` and set:
   - `BOT_CANCEL_ORDERS_ON_STOP` — If true, cancel managed pairs on graceful shutdown.
   - `BOT_CONFIG_PATH` — Path to YAML config (default `config.yaml`).
   - Optional: `BOT_STRATEGY_PARAMS` (JSON) to override strategy params; usually strategy params come from `config.yaml`.
-  - Optional: `BOT_PRICE_STORE_PATH` or set in config `data.db_path` for hybrid strategies (SQLite price history).
+  - Optional: `BOT_PRICE_STORE_PATH` or set in config `data.db_path` for hybrid strategies (SQLite price history). Use a **different path per bot process** if you run test and live (or two sessions) on the same host: WAL and retries reduce lock errors but do not replace separate DB files.
   - **Append-only JSONL logs (trades + Roostoo API metadata):** By default, paths depend on account mode: `trades-test.log` / `roostoo-api-test.log` for test, `trades-live.log` / `roostoo-api-live.log` for live. Set `BOT_TRADES_LOG` and/or `BOT_ROOSTOO_API_LOG` to override with a fixed path (e.g. `BOT_TRADES_LOG=trades.log` for the previous single-file behavior). If `data.log_dir` is set in `config.yaml`, default basenames are written under that directory.
   - Optional: `BOT_MAX_ORDERS_PER_CYCLE`, `BOT_ORDER_SPACING_SEC` (or in config execution).
   - Optional risk: `BOT_MAX_PENDING_ORDERS`, `BOT_MAX_ORDER_NOTIONAL`.
@@ -117,7 +117,7 @@ Copy `.env.example` to `.env` and set:
 
 Optional. Used for strategy params, execution pacing, data paths, and backtest.
 
-- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, min_price_usd, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
+- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, min_price_usd, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill, max_consecutive_db_errors — halt after this many consecutive SQLite failures in a tick, default 5), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
 - **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec, **fees** (market_bps, limit_bps — trading fee rates in basis points, automatically injected into strategy params).
 - **data** — db_path (price store), log_dir (optional directory for default trade/API JSONL logs when `BOT_TRADES_LOG` / `BOT_ROOSTOO_API_LOG` are unset).
 - **backtest** — start_date, end_date, initial_balance, data_dir.
@@ -150,7 +150,7 @@ python scripts/run_bot.py --strategy hybrid_trend_cross_sectional [--test] [--dr
 - `--env-file` — Path to `.env` (default `.env`).
 - `-v` — Verbose logging.
 
-**Price store warmup:** For hybrid strategies, `run_bot.py` automatically backfills `prices.db` with ~30 days of daily closes for all Roostoo-universe symbols from the Binance public klines API. This makes the bot operational from tick 1 (momentum ranking needs 8 daily closes, BTC regime needs 20). Symbols that already have enough history are skipped. Use `--skip-warmup` to disable. You can also run it standalone:
+**Price store warmup:** For hybrid strategies, `run_bot.py` automatically backfills `prices.db` with ~30 days of daily closes for all Roostoo-universe symbols from the Binance public klines API. This makes the bot operational from tick 1 (momentum ranking needs 8 daily closes, BTC regime needs 20). Symbols that already have enough history are skipped. Use `--skip-warmup` to disable. The SQLite store uses WAL mode, busy timeouts, retries on transient `OperationalError`, and the runner skips a tick (then may halt) on repeated DB failures — see `strategy.risk.max_consecutive_db_errors`. You can also run warmup standalone:
 
 ```bash
 python scripts/warmup_price_store.py [--db-path prices.db] [--days 30] [--tickers BTC,ETH,SOL]

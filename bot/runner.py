@@ -4,6 +4,7 @@ import dataclasses
 import logging
 import os
 import signal
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -113,8 +114,10 @@ def run(settings: BotSettings) -> None:
 
     tick_index = 0
     consecutive_api_errors = 0
+    consecutive_db_errors = 0
     risk_config = (settings.strategy_params or {}).get("risk") or {}
     max_errors = risk_config.get("max_consecutive_errors", 5)
+    max_db_errors = risk_config.get("max_consecutive_db_errors", 5)
     btc_move_kill = risk_config.get("btc_daily_move_kill", 0.40)
     try:
         while not _shutdown_requested:
@@ -170,32 +173,44 @@ def run(settings: BotSettings) -> None:
             if force_cash:
                 context = dataclasses.replace(context, risk_force_cash=True)
 
-            if price_store is not None and context.ticker:
-                price_store.append_ticker_snapshot(context.ticker, context.server_time_ms)
+            try:
+                if price_store is not None and context.ticker:
+                    price_store.append_ticker_snapshot(context.ticker, context.server_time_ms)
 
-            build_ms = (time.perf_counter() - tick_start) * 1000
+                build_ms = (time.perf_counter() - tick_start) * 1000
 
-            signals = strategy.next(context)
-            if max_orders_per_cycle is not None and len(signals) > 0:
-                cap = int(max_orders_per_cycle) if max_orders_per_cycle else 0
-                if cap > 0 and len(signals) > cap:
-                    signals = signals[:cap]
-            exec_start = time.perf_counter()
-            results = executor.execute(signals, context_ticker=context.ticker)
-            exec_ms = (time.perf_counter() - exec_start) * 1000
+                signals = strategy.next(context)
+                if max_orders_per_cycle is not None and len(signals) > 0:
+                    cap = int(max_orders_per_cycle) if max_orders_per_cycle else 0
+                    if cap > 0 and len(signals) > cap:
+                        signals = signals[:cap]
+                exec_start = time.perf_counter()
+                results = executor.execute(signals, context_ticker=context.ticker)
+                exec_ms = (time.perf_counter() - exec_start) * 1000
 
-            logger.info(
-                "tick tick_index=%s signals=%s build_context_ms=%.0f execute_ms=%.0f",
-                tick_index,
-                len(signals),
-                build_ms,
-                exec_ms,
-            )
-            if results and logger.isEnabledFor(logging.DEBUG):
-                for i, r in enumerate(results):
-                    oid = r.get("OrderID") or r.get("order_id")
-                    if oid is not None:
-                        logger.debug("order result index=%s order_id=%s", i, oid)
+                logger.info(
+                    "tick tick_index=%s signals=%s build_context_ms=%.0f execute_ms=%.0f",
+                    tick_index,
+                    len(signals),
+                    build_ms,
+                    exec_ms,
+                )
+                if results and logger.isEnabledFor(logging.DEBUG):
+                    for i, r in enumerate(results):
+                        oid = r.get("OrderID") or r.get("order_id")
+                        if oid is not None:
+                            logger.debug("order result index=%s order_id=%s", i, oid)
+
+                consecutive_db_errors = 0
+            except (sqlite3.OperationalError, sqlite3.DatabaseError) as e:
+                logger.exception("price store or tick DB error: %s", e)
+                consecutive_db_errors += 1
+                if consecutive_db_errors >= max_db_errors:
+                    logger.critical("KILL SWITCH: halting after DB failures")
+                    sys.exit(1)
+                time.sleep(settings.tick_seconds)
+                tick_index += 1
+                continue
 
             time.sleep(settings.tick_seconds)
             tick_index += 1

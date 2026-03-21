@@ -10,14 +10,50 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
 # Default BTC pair for regime and warmup
 BTC_PAIR = "BTC/USD"
 MS_PER_DAY = 24 * 3600 * 1000
+
+# SQLite: wait for locks; WAL improves concurrent access (persists on DB file)
+_CONNECT_TIMEOUT_SEC = 8.0
+_BUSY_TIMEOUT_MS = 10_000
+
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY_SEC = 0.05
+
+T = TypeVar("T")
+
+
+def _with_retry(operation: Callable[[], T], *, attempts: int = _RETRY_ATTEMPTS) -> T:
+    """Retry transient sqlite3.OperationalError with exponential backoff."""
+    delay = _RETRY_BASE_DELAY_SEC
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except sqlite3.OperationalError as e:
+            last_exc = e
+            if attempt < attempts - 1:
+                logger.warning(
+                    "sqlite OperationalError (attempt %s/%s): %s; retrying in %.3fs",
+                    attempt + 1,
+                    attempts,
+                    e,
+                    delay,
+                )
+                time.sleep(delay)
+                delay *= 2
+            else:
+                logger.error("sqlite OperationalError after %s attempts: %s", attempts, e)
+                raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def _normalize_pair(key: str) -> str:
@@ -52,35 +88,44 @@ class PriceStore:
         self._init_schema()
 
     def _conn(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self._path))
+        c = sqlite3.connect(str(self._path), timeout=_CONNECT_TIMEOUT_SEC)
+        c.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        return c
 
     def _init_schema(self) -> None:
-        with self._conn() as c:
-            c.execute(
-                """
-                CREATE TABLE IF NOT EXISTS price_snapshots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts_utc_ms INTEGER NOT NULL,
-                    symbol TEXT NOT NULL,
-                    last_price REAL NOT NULL,
-                    volume_24h_usd REAL,
-                    change_24h REAL
+        def _do() -> None:
+            with self._conn() as c:
+                c.execute("PRAGMA journal_mode=WAL")
+                c.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS price_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts_utc_ms INTEGER NOT NULL,
+                        symbol TEXT NOT NULL,
+                        last_price REAL NOT NULL,
+                        volume_24h_usd REAL,
+                        change_24h REAL
+                    )
+                    """
                 )
-                """
-            )
-            c.execute(
-                "CREATE INDEX IF NOT EXISTS idx_price_symbol_ts ON price_snapshots(symbol, ts_utc_ms)"
-            )
-            c.commit()
+                c.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_price_symbol_ts ON price_snapshots(symbol, ts_utc_ms)"
+                )
+                c.commit()
+
+        _with_retry(_do)
 
     def append_ticker_snapshot(self, ticker: dict[str, Any], ts_ms: int | None = None) -> int:
         """Append one snapshot from a full ticker response (pair -> {LastPrice, UnitTradeValue, Change, ...}).
         Returns number of rows inserted.
         """
         ts_ms = ts_ms or int(time.time() * 1000)
-        count = 0
         if not isinstance(ticker, dict):
             return 0
+        return _with_retry(lambda: self._append_ticker_snapshot_impl(ticker, ts_ms))
+
+    def _append_ticker_snapshot_impl(self, ticker: dict[str, Any], ts_ms: int) -> int:
+        count = 0
         with self._conn() as c:
             for pair, row in ticker.items():
                 if not isinstance(row, dict):
@@ -107,6 +152,9 @@ class PriceStore:
         symbol = _normalize_pair(symbol)
         if not symbol or limit_days <= 0:
             return []
+        return _with_retry(lambda: self._get_daily_closes_impl(symbol, limit_days))
+
+    def _get_daily_closes_impl(self, symbol: str, limit_days: int) -> list[float]:
         with self._conn() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -116,20 +164,21 @@ class PriceStore:
             rows = cur.fetchall()
         if not rows:
             return []
-        # Group by UTC day (ms // MS_PER_DAY), take last price per day
         by_day: dict[int, float] = {}
         for ts_ms, price in rows:
             day_key = ts_ms // MS_PER_DAY
             by_day[day_key] = price
         sorted_days = sorted(by_day.keys())
-        closes = [by_day[d] for d in sorted_days[-limit_days:]]
-        return closes
+        return [by_day[d] for d in sorted_days[-limit_days:]]
 
     def count_days_with_data(self, symbol: str) -> int:
         """Number of distinct UTC days that have at least one snapshot for symbol."""
         symbol = _normalize_pair(symbol)
         if not symbol:
             return 0
+        return _with_retry(lambda: self._count_days_with_data_impl(symbol))
+
+    def _count_days_with_data_impl(self, symbol: str) -> int:
         with self._conn() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -141,6 +190,9 @@ class PriceStore:
 
     def symbols_with_at_least_n_days(self, min_days: int) -> list[str]:
         """Return list of symbols that have at least min_days of daily data."""
+        return _with_retry(lambda: self._symbols_with_at_least_n_days_impl(min_days))
+
+    def _symbols_with_at_least_n_days_impl(self, min_days: int) -> list[str]:
         with self._conn() as conn:
             cur = conn.cursor()
             cur.execute(
@@ -157,6 +209,9 @@ class PriceStore:
         """Bulk insert (symbol, ts_utc_ms, last_price). Used by Binance warmup. Returns count inserted."""
         if not rows:
             return 0
+        return _with_retry(lambda: self._insert_daily_rows_impl(rows))
+
+    def _insert_daily_rows_impl(self, rows: list[tuple[str, int, float]]) -> int:
         conn = self._conn()
         try:
             cur = conn.cursor()
