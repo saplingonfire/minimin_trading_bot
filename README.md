@@ -8,7 +8,7 @@ Modular crypto trading bot for the [Roostoo](https://github.com/roostoo/Roostoo-
 
 - **Roostoo SDK** — Python client for Roostoo Public API v3: server time, exchange info, ticker, balance, place/cancel/query orders (market and limit). HMAC signing, configurable base URL.
 - **Modular bot** — Strategy abstraction (`Strategy.next(context) -> signals`), execution layer (precision, risk guards, retries), market-data facade. Add strategies under `bot/strategies/` and register by name.
-- **Fee-aware trading** — Configurable trading fees (market: 10 bps, limit: 5 bps). Strategies adjust buy quantities to account for fees and use a dead-zone filter to prevent unprofitable churn from small rebalances. Backtest engine deducts fees from simulated fills.
+- **Fee-aware trading** — Configurable trading fees (market: 10 bps, limit: 5 bps). Strategies adjust buy quantities to account for fees and use a dead-zone filter to prevent unprofitable churn from small rebalances. A percentage-based rebalance threshold (`min_rebalance_pct`, default 2%) scales with position size, and a per-pair trade cooldown (`pair_cooldown_min`, default 30 min) prevents buy-then-sell whipsaw across consecutive tick cycles. Backtest engine deducts fees from simulated fills.
 - **Test vs live credentials** — Two credential sets (env: `ROOSTOO_TEST_*` and `ROOSTOO_API_KEY`/`ROOSTOO_SECRET_KEY`). Switch with `BOT_LIVE` or CLI `--live` / `--test`.
 - **Config** — Env vars (`.env`) plus optional `config.yaml` for strategy params, execution pacing, risk, and backtest settings. Strategy section is merged into `strategy_params` for the chosen strategy.
 - **Risk and kill switch** — Drawdown ladder (e.g. −5% / −10% / −15% from peak), BTC daily move kill (e.g. 40%), consecutive API error halt, optional cancel-on-stop for managed pairs.
@@ -117,7 +117,7 @@ Copy `.env.example` to `.env` and set:
 
 Optional. Used for strategy params, execution pacing, data paths, and backtest.
 
-- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, min_price_usd, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill, max_consecutive_db_errors — halt after this many consecutive SQLite failures in a tick, default 5), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
+- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, min_price_usd, min_rebalance_pct, pair_cooldown_min, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill, max_consecutive_db_errors — halt after this many consecutive SQLite failures in a tick, default 5), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
 - **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec, **fees** (market_bps, limit_bps — trading fee rates in basis points, automatically injected into strategy params).
 - **data** — db_path (price store), log_dir (optional directory for default trade/API JSONL logs when `BOT_TRADES_LOG` / `BOT_ROOSTOO_API_LOG` are unset).
 - **backtest** — start_date, end_date, initial_balance, data_dir.

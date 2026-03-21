@@ -410,7 +410,11 @@ Compare to current holdings from `/v3/balance`. Compute delta:
 \Delta q_i = \text{target\_qty}(i) - \text{current\_qty}(i)
 \]
 
-- If \( |\Delta q_i| \cdot P_i < \text{min\_trade\_usd} \) (default $25, tuned from $50 for tighter rebalancing), skip — avoids churning on trivial adjustments.
+- If \( |\Delta q_i| \cdot P_i < \max(\text{min\_trade\_usd},\; \text{fee\_threshold},\; \text{pct\_threshold}) \), skip — avoids churning on trivial adjustments. The three thresholds are:
+  - `min_trade_usd` (default $25): fixed floor notional.
+  - `fee_threshold = \text{current\_value} \times \text{round\_trip\_fee}`: ensures the delta justifies the fee cost.
+  - `pct_threshold = \text{target\_usd} \times \text{min\_rebalance\_pct}` (default 2%): scales with position size, preventing noise-level rebalances on large positions.
+- **Per-pair cooldown** (`pair_cooldown_min`, default 30 min): After trading a pair, it is suppressed for a configurable cooldown period. This prevents the buy-then-sell whipsaw pattern that occurs when target weights shift marginally between consecutive tick cycles.
 - Process **SELL orders first**, then BUY orders, to free up USD capital before purchasing.
 - BUY orders are capped by available `quote_free` (USD + USDT balance) to avoid over-allocation.
 
@@ -533,6 +537,8 @@ def get_signed_headers(params: dict) -> dict:
 | Max weight per coin | 25% of portfolio | `max_weight_per_coin: 0.25` | Prevents single-coin concentration (raised from 20% for N=4) |
 | Max number of coins held | 4 (N) | `N: 4` | Increased conviction per name in 25-day window |
 | Minimum trade size | $25 USD notional | `min_trade_usd: 25.0` | Lowered from $50 for tighter rebalancing |
+| Min rebalance delta | 2% of target allocation | `min_rebalance_pct: 0.02` | Scales with position size; prevents churn on large positions |
+| Per-pair cooldown | 30 minutes | `pair_cooldown_min: 30` | Prevents buy-then-sell whipsaw across consecutive ticks |
 | Max orders per cycle | 2 | `max_orders_per_cycle: 2` | Rate-limit safe with 65s spacing |
 | Order spacing | 65 seconds | `order_spacing_sec: 65` | Conservative buffer above 60s rate limit |
 
@@ -726,6 +732,8 @@ strategy:
   target_exposure: 0.80       # 80% invested, 20% cash buffer
   max_weight_per_coin: 0.25   # raised from 0.20 for N=4
   min_trade_usd: 25.0         # lowered from 50 for tighter rebalancing
+  min_rebalance_pct: 0.02     # skip rebalance if delta < 2% of target (anti-churn)
+  pair_cooldown_min: 30       # suppress re-trading a pair for 30 min (anti-whipsaw)
   min_volume_usd: 500000
   min_days_history: 3
   rank_interval_min: 60       # re-rank every 60 min
