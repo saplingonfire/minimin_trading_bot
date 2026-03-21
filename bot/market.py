@@ -23,14 +23,14 @@ def build_context(
     server_time_ms = int(st.get("ServerTime", 0) or st.get("serverTime", 0) or 0)
 
     ticker_resp = client.get_ticker(pair)
-    ticker_data = ticker_resp.get("Ticker") or ticker_resp.get("ticker") or ticker_resp
+    ticker_data = ticker_resp.get("Data") or ticker_resp.get("Ticker") or ticker_resp.get("ticker") or ticker_resp
     if isinstance(ticker_data, dict) and "pair" not in ticker_data and pair:
         ticker_data = {pair: ticker_data}
     if not isinstance(ticker_data, dict):
         ticker_data = {}
 
     balance_resp = client.get_balance()
-    balance = balance_resp.get("Wallet") or balance_resp.get("wallet") or balance_resp
+    balance = balance_resp.get("SpotWallet") or balance_resp.get("Wallet") or balance_resp.get("wallet") or balance_resp
 
     orders_resp = client.query_order(pending_only=True)
     # API returns OrderMatched when orders exist (Roostoo API docs)
