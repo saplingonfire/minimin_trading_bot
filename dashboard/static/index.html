@@ -513,13 +513,25 @@
     let pvAreaSeries = null;
     let pvBaselineLine = null;
 
+    // #region agent log
+    window._dbgLog = [];
+    function _dbg(label, data) { window._dbgLog.push({label, data}); }
+    // #endregion
+
     function reconstructPortfolioHistory(balanceData, tickerData, ordersData, initialBalance) {
+      // #region agent log
+      window._dbgLog = [];
+      // #endregion
       const holdings = parseWallet(balanceData);
       if (Object.keys(holdings).length === 0) return [];
 
       const currentPV = computePV(holdings, tickerData);
       const nowSec = Math.floor(Date.now() / 1000);
       const points = [{ time: nowSec, value: currentPV }];
+
+      // #region agent log
+      _dbg('INIT', {holdings: Object.assign({}, holdings), currentPV, initialBalance});
+      // #endregion
 
       const allOrders = extractOrders(ordersData);
       const filled = allOrders.filter(o => {
@@ -532,6 +544,11 @@
         return tb - ta;
       });
 
+      // #region agent log
+      _dbg('ORDERS', {total: allOrders.length, filled: filled.length, first3: filled.slice(0,3).map(o=>({P:o.Pair??o.pair,S:o.Side??o.side,St:o.Status??o.status,CC:o.CoinChange,UC:o.UnitChange,FQ:o.FilledQuantity,AP:o.FilledAverPrice,T:o.CreateTimestamp}))});
+      // #endregion
+
+      let orderIdx = 0;
       for (const o of filled) {
         const pair = o.Pair ?? o.pair ?? '';
         const side = (o.Side ?? o.side ?? '').toUpperCase();
@@ -547,9 +564,16 @@
         const filledQty = Number(o.FilledQuantity ?? o.filledQuantity ?? 0);
         const avgPrice = Number(o.FilledAverPrice ?? o.filledAverPrice ?? 0);
 
+        const hBefore = { [base]: holdings[base] || 0, [quote]: holdings[quote] || 0 };
+
         if (coinChange !== 0 && unitChange !== 0) {
-          holdings[base] = (holdings[base] || 0) - coinChange;
-          holdings[quote] = (holdings[quote] || 0) - unitChange;
+          if (side === 'BUY') {
+            holdings[base] = (holdings[base] || 0) - coinChange;
+            holdings[quote] = (holdings[quote] || 0) + unitChange;
+          } else {
+            holdings[base] = (holdings[base] || 0) + coinChange;
+            holdings[quote] = (holdings[quote] || 0) - unitChange;
+          }
         } else if (filledQty > 0 && avgPrice > 0) {
           if (side === 'BUY') {
             holdings[base] = (holdings[base] || 0) - filledQty;
@@ -566,7 +590,18 @@
         const pv = computePV(holdings, tickerData, overrides);
         const timeSec = Math.floor(ts / 1000);
         points.push({ time: timeSec, value: pv });
+
+        // #region agent log
+        if (orderIdx < 8 || pv < 0 || pv > 200000) {
+          _dbg('STEP'+orderIdx, {pair, side, coinChange, unitChange, filledQty, avgPrice, hBefore, hAfter:{[base]:holdings[base],[quote]:holdings[quote]}, pv, usedCC: coinChange!==0&&unitChange!==0});
+        }
+        // #endregion
+        orderIdx++;
       }
+
+      // #region agent log
+      _dbg('FINAL', {pointCount: points.length, min: Math.min(...points.map(p=>p.value)), max: Math.max(...points.map(p=>p.value)), endHoldings: Object.assign({}, holdings), first3: points.slice(0,3), last3: points.slice(-3)});
+      // #endregion
 
       points.reverse();
 
@@ -583,6 +618,11 @@
           deduped.push(p);
         }
       }
+
+      // #region agent log
+      _dbg('DEDUPED', {count: deduped.length, points: deduped});
+      // #endregion
+
       return deduped;
     }
 
@@ -710,6 +750,11 @@
       const p = renderPendingCount(pendingResult);
       renderOrders(ordersResult);
       renderChart(balanceResult, tickerResult, ordersResult, configResult);
+
+      // #region agent log
+      const dbgEl = document.getElementById('debug-panel');
+      if (dbgEl && window._dbgLog) { dbgEl.textContent = JSON.stringify(window._dbgLog, null, 2); }
+      // #endregion
 
       const ok = t && b && p;
       setStatus(ok ? 'Connected' : 'Some data failed. Check credentials and API.', ok);
