@@ -8,11 +8,12 @@ Modular crypto trading bot for the [Roostoo](https://github.com/roostoo/Roostoo-
 
 - **Roostoo SDK** — Python client for Roostoo Public API v3: server time, exchange info, ticker, balance, place/cancel/query orders (market and limit). HMAC signing, configurable base URL.
 - **Modular bot** — Strategy abstraction (`Strategy.next(context) -> signals`), execution layer (precision, risk guards, retries), market-data facade. Add strategies under `bot/strategies/` and register by name.
+- **Fee-aware trading** — Configurable trading fees (market: 10 bps, limit: 5 bps). Strategies adjust buy quantities to account for fees and use a dead-zone filter to prevent unprofitable churn from small rebalances. Backtest engine deducts fees from simulated fills.
 - **Test vs live credentials** — Two credential sets (env: `ROOSTOO_TEST_*` and `ROOSTOO_API_KEY`/`ROOSTOO_SECRET_KEY`). Switch with `BOT_LIVE` or CLI `--live` / `--test`.
 - **Config** — Env vars (`.env`) plus optional `config.yaml` for strategy params, execution pacing, risk, and backtest settings. Strategy section is merged into `strategy_params` for the chosen strategy.
 - **Risk and kill switch** — Drawdown ladder (e.g. −5% / −10% / −15% from peak), BTC daily move kill (e.g. 40%), consecutive API error halt, optional cancel-on-stop for managed pairs.
 - **Strategies** — Example (test pipeline); hybrid trend + cross-sectional momentum (BTC MA20 regime, top-N inverse-vol); throttled variant (three-tier regime, soft exposure); cross-sectional momentum (weekly rebalance); momentum 20/50 (EMA crossover); Bollinger + RSI.
-- **Backtest** — Script runs configured strategy over Binance historical OHLCV; prints performance report (returns, drawdown, etc.).
+- **Backtest** — Script runs configured strategy over Binance historical OHLCV; prints performance report (returns, drawdown, fees, etc.). Simulates trading fees on all fills.
 - **Historical data sync** — Script to download Binance spot klines to local CSV (Roostoo tradeable universe or custom tickers). Strategies that need OHLCV use `BINANCE_DATA_DIR` or a file-based provider.
 - **Dashboard** — Read-only web UI (FastAPI) to monitor balance, orders, ticker; uses same SDK. No trading from the dashboard (competition rules). Deployable to Vercel.
 
@@ -24,7 +25,7 @@ Modular crypto trading bot for the [Roostoo](https://github.com/roostoo/Roostoo-
 minimin_trading_bot/
 ├── roostoo/              # Roostoo Public API SDK (client, auth, models, exceptions)
 ├── bot/                  # Trading bot
-│   ├── base.py           # Strategy ABC, TradingContext, PlaceOrderSignal, CancelOrderSignal
+│   ├── base.py           # Strategy ABC, TradingContext, PlaceOrderSignal, CancelOrderSignal, FeeSchedule
 │   ├── runner.py         # Tick loop, strategy load, kill switch, order pacing
 │   ├── market.py         # build_context (ticker, balance, pending orders)
 │   ├── execution.py      # Signal → orders; precision, risk guards, retries
@@ -115,8 +116,8 @@ Copy `.env.example` to `.env` and set:
 
 Optional. Used for strategy params, execution pacing, data paths, and backtest.
 
-- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
-- **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec.
+- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, min_price_usd, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
+- **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec, **fees** (market_bps, limit_bps — trading fee rates in basis points, automatically injected into strategy params).
 - **data** — db_path (price store), log_dir.
 - **backtest** — start_date, end_date, initial_balance, data_dir.
 - **strategy.exclude_pairs** — Optional list of pairs to exclude from the tradeable universe (e.g. `["TRUMP/USD", "PENGU/USD"]`). Env override: `BOT_EXCLUDE_PAIRS` (comma-separated).
@@ -207,6 +208,7 @@ python scripts/run_backtest.py --config config.yaml --data-dir data/binance [--s
 - `--exclude-pairs` — Comma-separated pairs to exclude (overrides `strategy.exclude_pairs` and `BOT_EXCLUDE_PAIRS`).
 - Ticker exclusion also uses **`strategy.exclude_pairs`** in config and **`BOT_EXCLUDE_PAIRS`** in `.env` (same as live bot).
 - Set `BOT_STRATEGY` in env (or in .env) to choose the strategy to backtest.
+- **Fee simulation** — The backtest deducts trading fees on every simulated fill using the rates from `execution.fees` (default: 10 bps market, 5 bps limit). The performance report includes total fees paid. Strategy dead-zone and buy-qty adjustments are also active during backtesting.
 
 ---
 
