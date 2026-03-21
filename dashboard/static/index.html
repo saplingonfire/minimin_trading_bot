@@ -116,6 +116,7 @@
     .empty { color: var(--muted); font-style: italic; }
     .err-msg { color: var(--error); font-size: 0.875rem; margin-top: 0.5rem; }
   </style>
+  <script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
   <h1 id="page-title">Roostoo Bot Dashboard</h1>
@@ -164,6 +165,13 @@
       <tbody id="positions-body"></tbody>
     </table>
     <div id="balance-err" class="err-msg" hidden></div>
+  </div>
+
+  <div class="card" id="card-pv-chart" style="margin-bottom: 1rem;">
+    <h2>Portfolio Value</h2>
+    <div id="pv-chart" style="height: 280px;"></div>
+    <div id="pv-chart-empty" class="empty" hidden>No filled orders to chart.</div>
+    <div id="pv-chart-err" class="err-msg" hidden></div>
   </div>
 
   <div class="card" style="margin-bottom: 1rem;">
@@ -249,23 +257,6 @@
       return data;
     }
 
-    async function loadServerTime() {
-      setCardLoading('time', true);
-      setCardError('time', null);
-      try {
-        const data = await fetchApi('/server_time');
-        const ts = data.ServerTime ?? data.server_time ?? data.time;
-        document.getElementById('server-time').textContent = ts != null ? new Date(ts).toLocaleString() : '—';
-        return true;
-      } catch (e) {
-        setCardError('time', e);
-        document.getElementById('server-time').textContent = 'Error';
-        return false;
-      } finally {
-        setCardLoading('time', false);
-      }
-    }
-
     function getTickerRow(tickerData, pair) {
       const payload = tickerData.Data && typeof tickerData.Data === 'object' ? tickerData.Data : tickerData;
       return payload[pair] ?? payload[pair?.replace('/', '')] ?? null;
@@ -279,122 +270,6 @@
       if (n >= 1000) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       if (n >= 1) return n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 });
       return n.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 });
-    }
-
-    async function loadBalanceAndTicker() {
-      setCardLoading('balance', true);
-      setCardError('balance', null);
-      try {
-        const [balanceData, tickerData] = await Promise.all([
-          fetchApi('/balance'),
-          fetchApi('/ticker'),
-        ]);
-        const spot = balanceData.SpotWallet && typeof balanceData.SpotWallet === 'object' ? balanceData.SpotWallet : null;
-        const margin = balanceData.MarginWallet && typeof balanceData.MarginWallet === 'object' ? balanceData.MarginWallet : null;
-        const legacy = balanceData.Wallet ?? balanceData.wallet ?? balanceData.CurrBal;
-        const wallet = (typeof legacy === 'object' && legacy !== null) ? legacy : (spot ?? margin ?? balanceData);
-        if (typeof wallet !== 'object' || wallet === null) {
-          document.getElementById('portfolio-value').textContent = '—';
-          document.getElementById('balance').textContent = '—';
-          document.getElementById('positions-body').innerHTML = '<tr><td colspan="6" class="empty">No data</td></tr>';
-          return true;
-        }
-        const combined = spot && margin ? { ...spot, ...margin } : wallet;
-        const entries = Object.entries(combined).filter(([, v]) => v && typeof v === 'object');
-
-        let cashUsd = 0;
-        let portfolioValue = 0;
-        const positions = [];
-
-        entries.forEach(([asset, v]) => {
-          const free = Number(v.Free ?? v.free ?? 0) || 0;
-          const lock = Number(v.Lock ?? v.lock ?? 0) || 0;
-          const total = free + lock;
-          if (total === 0) return;
-
-          if (asset === 'USD' || asset === 'USDT') {
-            cashUsd += total;
-            portfolioValue += total;
-            positions.push({ asset, total, free, lock, price: 1, value: total, change: null, isCash: true });
-          } else {
-            const pair = asset + '/USD';
-            const row = getTickerRow(tickerData, pair);
-            const price = row ? (Number(row.LastPrice ?? row.lastPrice ?? row.Last) || 0) : 0;
-            const change = row ? (Number(row.Change ?? row.change) || null) : null;
-            const value = price > 0 ? total * price : 0;
-            portfolioValue += value;
-            positions.push({ asset, total, free, lock, price, value, change, isCash: false });
-          }
-        });
-
-        positions.sort((a, b) => b.value - a.value);
-
-        document.getElementById('portfolio-value').textContent = portfolioValue > 0 ? '$' + fmtUsd(portfolioValue) : '—';
-        document.getElementById('balance').textContent = cashUsd > 0 ? '$' + fmtUsd(cashUsd) : '—';
-
-        const tbody = document.getElementById('positions-body');
-        if (positions.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="empty">No positions</td></tr>';
-        } else {
-          tbody.innerHTML = positions.map(p => {
-            const pct = portfolioValue > 0 ? (p.value / portfolioValue * 100) : 0;
-            const barWidth = Math.min(pct, 100);
-            const priceStr = p.isCash ? '—' : (p.price > 0 ? '$' + fmtUsd(p.price) : '—');
-            const valueStr = p.value > 0 ? '$' + fmtUsd(p.value) : '—';
-            let changeStr = '—';
-            if (p.change != null && !isNaN(p.change)) {
-              const sign = p.change >= 0 ? '+' : '';
-              const color = p.change >= 0 ? 'var(--success)' : 'var(--error)';
-              changeStr = `<span style="color: ${color}">${sign}${p.change.toFixed(2)}%</span>`;
-            }
-            const pctStr = `<span class="pct-bar" style="width: ${barWidth}%"></span>${pct.toFixed(1)}%`;
-            const qtyTitle = p.lock > 0 ? `Free: ${fmtQty(p.free)}, Locked: ${fmtQty(p.lock)}` : '';
-            return `<tr>
-              <td class="asset-name">${p.asset}</td>
-              <td class="num" title="${qtyTitle}">${p.isCash ? fmtUsd(p.total) : fmtQty(p.total)}</td>
-              <td class="num">${priceStr}</td>
-              <td class="num">${valueStr}</td>
-              <td class="num">${changeStr}</td>
-              <td class="num pct-col">${pctStr}</td>
-            </tr>`;
-          }).join('');
-        }
-
-        const dataPayload = tickerData.Data && typeof tickerData.Data === 'object' ? tickerData.Data : tickerData;
-        const btcTicker = dataPayload['BTC/USD'] ?? dataPayload.BTCUSD ?? tickerData['BTC/USD'] ?? tickerData.BTCUSD ?? tickerData;
-        const btcPrice = btcTicker?.LastPrice ?? btcTicker?.lastPrice ?? btcTicker?.Last;
-        const btcChange = btcTicker?.Change ?? btcTicker?.change;
-        let tickerHtml = btcPrice != null ? 'USD ' + Number(btcPrice).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
-        if (btcChange != null && !isNaN(btcChange)) tickerHtml += ` <span style="color: var(--muted);">(${Number(btcChange) >= 0 ? '+' : ''}${Number(btcChange).toFixed(2)}%)</span>`;
-        document.getElementById('ticker').innerHTML = tickerHtml;
-        document.getElementById('ticker-err').hidden = true;
-        return true;
-      } catch (e) {
-        setCardError('balance', e);
-        document.getElementById('portfolio-value').textContent = 'Error';
-        document.getElementById('balance').textContent = '—';
-        document.getElementById('positions-body').innerHTML = '';
-        return false;
-      } finally {
-        setCardLoading('balance', false);
-      }
-    }
-
-    async function loadPendingCount() {
-      setCardLoading('pending', true);
-      setCardError('pending', null);
-      try {
-        const data = await fetchApi('/pending_count');
-        const n = data.PendingCount ?? data.pending_count ?? data.TotalPending ?? data.total_pending ?? data.count ?? data;
-        document.getElementById('pending').textContent = typeof n === 'number' ? n : (n != null ? String(n) : '—');
-        return true;
-      } catch (e) {
-        setCardError('pending', e);
-        document.getElementById('pending').textContent = 'Error';
-        return false;
-      } finally {
-        setCardLoading('pending', false);
-      }
     }
 
     function timeAgo(ms) {
@@ -417,71 +292,384 @@
       return `<span class="status-badge ${cls}">${status}</span>`;
     }
 
-    async function loadOrders() {
-      document.getElementById('orders-err').hidden = true;
-      try {
-        const data = await fetchApi('/orders?limit=50');
-        const orders = data.OrderMatched ?? data.Orders ?? data.orders ?? data.Data ?? data.List ?? (Array.isArray(data) ? data : []);
-        const rows = Array.isArray(orders) ? orders : [];
-        const tbody = document.getElementById('orders-body');
-        if (rows.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="9" class="empty">No orders</td></tr>';
-          return true;
-        }
-        tbody.innerHTML = rows.map(o => {
-          const pair = o.Pair ?? o.pair ?? '—';
-          const side = o.Side ?? o.side ?? '—';
-          const sideClass = side.toLowerCase() === 'buy' ? 'side-buy' : side.toLowerCase() === 'sell' ? 'side-sell' : '';
-          const type = o.Type ?? o.type ?? '—';
-          const reqQty = Number(o.Quantity ?? o.quantity ?? 0);
-          const filledQty = Number(o.FilledQuantity ?? o.filledQuantity ?? 0);
-          const fillPct = reqQty > 0 ? Math.min(filledQty / reqQty * 100, 100) : 0;
-          const avgPrice = Number(o.FilledAverPrice ?? o.filledAverPrice ?? o.Price ?? o.price ?? 0);
-          const value = filledQty > 0 && avgPrice > 0 ? filledQty * avgPrice : 0;
-          const status = o.Status ?? o.status ?? '—';
-          const ts = o.CreateTimestamp ?? o.createTimestamp ?? o.CreateTime ?? o.createTime;
-          const timeStr = ts != null ? new Date(ts).toLocaleString() : '—';
-          const relTime = ts != null ? timeAgo(ts) : '';
+    // --- Reusable helpers ---
 
-          const reqQtyStr = reqQty > 0 ? fmtQty(reqQty) : '—';
-          const filledStr = filledQty > 0
-            ? `<span class="fill-bar-wrap">${fmtQty(filledQty)}<span class="fill-bar"><span class="fill-bar-inner" style="width:${fillPct}%"></span></span></span>`
-            : '—';
-          const avgPriceStr = avgPrice > 0 ? '$' + fmtUsd(avgPrice) : '—';
-          const valueStr = value > 0 ? '$' + fmtUsd(value) : '—';
-          const timeCell = relTime ? `<span title="${timeStr}">${relTime}</span>` : timeStr;
+    function parseWallet(balanceData) {
+      const spot = balanceData.SpotWallet && typeof balanceData.SpotWallet === 'object' ? balanceData.SpotWallet : null;
+      const margin = balanceData.MarginWallet && typeof balanceData.MarginWallet === 'object' ? balanceData.MarginWallet : null;
+      const legacy = balanceData.Wallet ?? balanceData.wallet ?? balanceData.CurrBal;
+      const wallet = (typeof legacy === 'object' && legacy !== null) ? legacy : (spot ?? margin ?? balanceData);
+      if (typeof wallet !== 'object' || wallet === null) return {};
+      const combined = spot && margin ? { ...spot, ...margin } : wallet;
+      const result = {};
+      for (const [asset, v] of Object.entries(combined)) {
+        if (!v || typeof v !== 'object') continue;
+        const total = (Number(v.Free ?? v.free ?? 0) || 0) + (Number(v.Lock ?? v.lock ?? 0) || 0);
+        if (total !== 0) result[asset] = total;
+      }
+      return result;
+    }
 
-          return `<tr>
-            <td>${pair}</td>
-            <td class="${sideClass}">${side}</td>
-            <td>${type}</td>
-            <td class="num">${reqQtyStr}</td>
-            <td class="num">${filledStr}</td>
-            <td class="num">${avgPriceStr}</td>
-            <td class="num">${valueStr}</td>
-            <td>${statusBadge(status)}</td>
-            <td class="num">${timeCell}</td>
-          </tr>`;
-        }).join('');
-        return true;
-      } catch (e) {
-        document.getElementById('orders-body').innerHTML = '';
-        const errEl = document.getElementById('orders-err');
-        errEl.hidden = false;
-        errEl.textContent = e.message || String(e);
+    function computePV(holdings, tickerData, priceOverrides) {
+      let pv = 0;
+      for (const [asset, qty] of Object.entries(holdings)) {
+        if (asset === 'USD' || asset === 'USDT') { pv += qty; continue; }
+        const override = priceOverrides && priceOverrides[asset];
+        if (override > 0) { pv += qty * override; continue; }
+        const row = getTickerRow(tickerData, asset + '/USD');
+        const price = row ? (Number(row.LastPrice ?? row.lastPrice ?? row.Last) || 0) : 0;
+        if (price > 0) pv += qty * price;
+      }
+      return pv;
+    }
+
+    function extractOrders(data) {
+      const list = data.OrderMatched ?? data.Orders ?? data.orders ?? data.Data ?? data.List ?? (Array.isArray(data) ? data : []);
+      return Array.isArray(list) ? list : [];
+    }
+
+    // --- Render functions (pure, receive data as params) ---
+
+    function renderServerTime(result) {
+      setCardLoading('time', false);
+      if (result.status === 'rejected') {
+        setCardError('time', result.reason);
+        document.getElementById('server-time').textContent = 'Error';
         return false;
       }
+      setCardError('time', null);
+      const data = result.value;
+      const ts = data.ServerTime ?? data.server_time ?? data.time;
+      document.getElementById('server-time').textContent = ts != null ? new Date(ts).toLocaleString() : '—';
+      return true;
     }
+
+    function renderPortfolio(balanceResult, tickerResult) {
+      setCardLoading('balance', false);
+      if (balanceResult.status === 'rejected' || tickerResult.status === 'rejected') {
+        const err = balanceResult.reason || tickerResult.reason;
+        setCardError('balance', err);
+        document.getElementById('portfolio-value').textContent = 'Error';
+        document.getElementById('balance').textContent = '—';
+        document.getElementById('positions-body').innerHTML = '';
+        return false;
+      }
+      setCardError('balance', null);
+      const balanceData = balanceResult.value;
+      const tickerData = tickerResult.value;
+
+      const spot = balanceData.SpotWallet && typeof balanceData.SpotWallet === 'object' ? balanceData.SpotWallet : null;
+      const margin = balanceData.MarginWallet && typeof balanceData.MarginWallet === 'object' ? balanceData.MarginWallet : null;
+      const legacy = balanceData.Wallet ?? balanceData.wallet ?? balanceData.CurrBal;
+      const wallet = (typeof legacy === 'object' && legacy !== null) ? legacy : (spot ?? margin ?? balanceData);
+      if (typeof wallet !== 'object' || wallet === null) {
+        document.getElementById('portfolio-value').textContent = '—';
+        document.getElementById('balance').textContent = '—';
+        document.getElementById('positions-body').innerHTML = '<tr><td colspan="6" class="empty">No data</td></tr>';
+        return true;
+      }
+      const combined = spot && margin ? { ...spot, ...margin } : wallet;
+      const entries = Object.entries(combined).filter(([, v]) => v && typeof v === 'object');
+
+      let cashUsd = 0;
+      let portfolioValue = 0;
+      const positions = [];
+
+      for (const [asset, v] of entries) {
+        const free = Number(v.Free ?? v.free ?? 0) || 0;
+        const lock = Number(v.Lock ?? v.lock ?? 0) || 0;
+        const total = free + lock;
+        if (total === 0) continue;
+
+        if (asset === 'USD' || asset === 'USDT') {
+          cashUsd += total;
+          portfolioValue += total;
+          positions.push({ asset, total, free, lock, price: 1, value: total, change: null, isCash: true });
+        } else {
+          const pair = asset + '/USD';
+          const row = getTickerRow(tickerData, pair);
+          const price = row ? (Number(row.LastPrice ?? row.lastPrice ?? row.Last) || 0) : 0;
+          const change = row ? (Number(row.Change ?? row.change) || null) : null;
+          const value = price > 0 ? total * price : 0;
+          portfolioValue += value;
+          positions.push({ asset, total, free, lock, price, value, change, isCash: false });
+        }
+      }
+
+      positions.sort((a, b) => b.value - a.value);
+
+      document.getElementById('portfolio-value').textContent = portfolioValue > 0 ? '$' + fmtUsd(portfolioValue) : '—';
+      document.getElementById('balance').textContent = cashUsd > 0 ? '$' + fmtUsd(cashUsd) : '—';
+
+      const tbody = document.getElementById('positions-body');
+      if (positions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No positions</td></tr>';
+      } else {
+        tbody.innerHTML = positions.map(p => {
+          const pct = portfolioValue > 0 ? (p.value / portfolioValue * 100) : 0;
+          const barWidth = Math.min(pct, 100);
+          const priceStr = p.isCash ? '—' : (p.price > 0 ? '$' + fmtUsd(p.price) : '—');
+          const valueStr = p.value > 0 ? '$' + fmtUsd(p.value) : '—';
+          let changeStr = '—';
+          if (p.change != null && !isNaN(p.change)) {
+            const sign = p.change >= 0 ? '+' : '';
+            const color = p.change >= 0 ? 'var(--success)' : 'var(--error)';
+            changeStr = `<span style="color: ${color}">${sign}${p.change.toFixed(2)}%</span>`;
+          }
+          const pctStr = `<span class="pct-bar" style="width: ${barWidth}%"></span>${pct.toFixed(1)}%`;
+          const qtyTitle = p.lock > 0 ? `Free: ${fmtQty(p.free)}, Locked: ${fmtQty(p.lock)}` : '';
+          return `<tr>
+            <td class="asset-name">${p.asset}</td>
+            <td class="num" title="${qtyTitle}">${p.isCash ? fmtUsd(p.total) : fmtQty(p.total)}</td>
+            <td class="num">${priceStr}</td>
+            <td class="num">${valueStr}</td>
+            <td class="num">${changeStr}</td>
+            <td class="num pct-col">${pctStr}</td>
+          </tr>`;
+        }).join('');
+      }
+
+      const dataPayload = tickerData.Data && typeof tickerData.Data === 'object' ? tickerData.Data : tickerData;
+      const btcTicker = dataPayload['BTC/USD'] ?? dataPayload.BTCUSD ?? tickerData['BTC/USD'] ?? tickerData.BTCUSD ?? tickerData;
+      const btcPrice = btcTicker?.LastPrice ?? btcTicker?.lastPrice ?? btcTicker?.Last;
+      const btcChange = btcTicker?.Change ?? btcTicker?.change;
+      let tickerHtml = btcPrice != null ? 'USD ' + Number(btcPrice).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
+      if (btcChange != null && !isNaN(btcChange)) tickerHtml += ` <span style="color: var(--muted);">(${Number(btcChange) >= 0 ? '+' : ''}${Number(btcChange).toFixed(2)}%)</span>`;
+      document.getElementById('ticker').innerHTML = tickerHtml;
+      document.getElementById('ticker-err').hidden = true;
+      return true;
+    }
+
+    function renderPendingCount(result) {
+      setCardLoading('pending', false);
+      if (result.status === 'rejected') {
+        setCardError('pending', result.reason);
+        document.getElementById('pending').textContent = 'Error';
+        return false;
+      }
+      setCardError('pending', null);
+      const data = result.value;
+      const n = data.PendingCount ?? data.pending_count ?? data.TotalPending ?? data.total_pending ?? data.count ?? data;
+      document.getElementById('pending').textContent = typeof n === 'number' ? n : (n != null ? String(n) : '—');
+      return true;
+    }
+
+    function renderOrders(result) {
+      const errEl = document.getElementById('orders-err');
+      errEl.hidden = true;
+      if (result.status === 'rejected') {
+        document.getElementById('orders-body').innerHTML = '';
+        errEl.hidden = false;
+        errEl.textContent = result.reason?.message || String(result.reason);
+        return false;
+      }
+      const rows = extractOrders(result.value);
+      const tbody = document.getElementById('orders-body');
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty">No orders</td></tr>';
+        return true;
+      }
+      tbody.innerHTML = rows.map(o => {
+        const pair = o.Pair ?? o.pair ?? '—';
+        const side = o.Side ?? o.side ?? '—';
+        const sideClass = side.toLowerCase() === 'buy' ? 'side-buy' : side.toLowerCase() === 'sell' ? 'side-sell' : '';
+        const type = o.Type ?? o.type ?? '—';
+        const reqQty = Number(o.Quantity ?? o.quantity ?? 0);
+        const filledQty = Number(o.FilledQuantity ?? o.filledQuantity ?? 0);
+        const fillPct = reqQty > 0 ? Math.min(filledQty / reqQty * 100, 100) : 0;
+        const avgPrice = Number(o.FilledAverPrice ?? o.filledAverPrice ?? o.Price ?? o.price ?? 0);
+        const value = filledQty > 0 && avgPrice > 0 ? filledQty * avgPrice : 0;
+        const status = o.Status ?? o.status ?? '—';
+        const ts = o.CreateTimestamp ?? o.createTimestamp ?? o.CreateTime ?? o.createTime;
+        const timeStr = ts != null ? new Date(ts).toLocaleString() : '—';
+        const relTime = ts != null ? timeAgo(ts) : '';
+
+        const reqQtyStr = reqQty > 0 ? fmtQty(reqQty) : '—';
+        const filledStr = filledQty > 0
+          ? `<span class="fill-bar-wrap">${fmtQty(filledQty)}<span class="fill-bar"><span class="fill-bar-inner" style="width:${fillPct}%"></span></span></span>`
+          : '—';
+        const avgPriceStr = avgPrice > 0 ? '$' + fmtUsd(avgPrice) : '—';
+        const valueStr = value > 0 ? '$' + fmtUsd(value) : '—';
+        const timeCell = relTime ? `<span title="${timeStr}">${relTime}</span>` : timeStr;
+
+        return `<tr>
+          <td>${pair}</td>
+          <td class="${sideClass}">${side}</td>
+          <td>${type}</td>
+          <td class="num">${reqQtyStr}</td>
+          <td class="num">${filledStr}</td>
+          <td class="num">${avgPriceStr}</td>
+          <td class="num">${valueStr}</td>
+          <td>${statusBadge(status)}</td>
+          <td class="num">${timeCell}</td>
+        </tr>`;
+      }).join('');
+      return true;
+    }
+
+    // --- Portfolio value chart ---
+
+    let pvChart = null;
+    let pvAreaSeries = null;
+
+    function reconstructPortfolioHistory(balanceData, tickerData, ordersData) {
+      const holdings = parseWallet(balanceData);
+      if (Object.keys(holdings).length === 0) return [];
+
+      const currentPV = computePV(holdings, tickerData);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const points = [{ time: nowSec, value: currentPV }];
+
+      const allOrders = extractOrders(ordersData);
+      const filled = allOrders.filter(o => {
+        const s = (o.Status ?? o.status ?? '').toLowerCase();
+        return s === 'filled' || s === 'completed';
+      });
+      filled.sort((a, b) => {
+        const ta = a.CreateTimestamp ?? a.createTimestamp ?? a.CreateTime ?? a.createTime ?? 0;
+        const tb = b.CreateTimestamp ?? b.createTimestamp ?? b.CreateTime ?? b.createTime ?? 0;
+        return tb - ta;
+      });
+
+      for (const o of filled) {
+        const pair = o.Pair ?? o.pair ?? '';
+        const side = (o.Side ?? o.side ?? '').toUpperCase();
+        const ts = o.CreateTimestamp ?? o.createTimestamp ?? o.CreateTime ?? o.createTime;
+        if (!pair || !side || ts == null) continue;
+
+        const parts = pair.includes('/') ? pair.split('/') : [pair, 'USD'];
+        const base = parts[0];
+        const quote = parts[1] || 'USD';
+
+        const coinChange = Number(o.CoinChange ?? o.coinChange ?? 0);
+        const unitChange = Number(o.UnitChange ?? o.unitChange ?? 0);
+        const filledQty = Number(o.FilledQuantity ?? o.filledQuantity ?? 0);
+        const avgPrice = Number(o.FilledAverPrice ?? o.filledAverPrice ?? 0);
+
+        if (coinChange !== 0 && unitChange !== 0) {
+          holdings[base] = (holdings[base] || 0) - coinChange;
+          holdings[quote] = (holdings[quote] || 0) - unitChange;
+        } else if (filledQty > 0 && avgPrice > 0) {
+          if (side === 'BUY') {
+            holdings[base] = (holdings[base] || 0) - filledQty;
+            holdings[quote] = (holdings[quote] || 0) + filledQty * avgPrice;
+          } else {
+            holdings[base] = (holdings[base] || 0) + filledQty;
+            holdings[quote] = (holdings[quote] || 0) - filledQty * avgPrice;
+          }
+        } else {
+          continue;
+        }
+
+        const overrides = avgPrice > 0 ? { [base]: avgPrice } : undefined;
+        const pv = computePV(holdings, tickerData, overrides);
+        const timeSec = Math.floor(ts / 1000);
+        points.push({ time: timeSec, value: pv });
+      }
+
+      points.reverse();
+
+      const seen = new Set();
+      const deduped = [];
+      for (const p of points) {
+        if (!seen.has(p.time)) {
+          seen.add(p.time);
+          deduped.push(p);
+        }
+      }
+      return deduped;
+    }
+
+    function renderChart(balanceResult, tickerResult, ordersResult) {
+      const chartEl = document.getElementById('pv-chart');
+      const emptyEl = document.getElementById('pv-chart-empty');
+      const errEl = document.getElementById('pv-chart-err');
+      errEl.hidden = true;
+
+      if (balanceResult.status === 'rejected' || tickerResult.status === 'rejected' || ordersResult.status === 'rejected') {
+        const err = balanceResult.reason || tickerResult.reason || ordersResult.reason;
+        errEl.hidden = false;
+        errEl.textContent = err?.message || String(err);
+        emptyEl.hidden = true;
+        if (pvChart) { chartEl.style.display = 'none'; }
+        return;
+      }
+
+      const points = reconstructPortfolioHistory(balanceResult.value, tickerResult.value, ordersResult.value);
+
+      if (points.length < 2) {
+        emptyEl.hidden = false;
+        chartEl.style.display = 'none';
+        return;
+      }
+
+      emptyEl.hidden = true;
+      chartEl.style.display = '';
+
+      if (!pvChart) {
+        pvChart = LightweightCharts.createChart(chartEl, {
+          layout: {
+            background: { type: 'solid', color: '#1a2332' },
+            textColor: '#8b949e',
+          },
+          grid: {
+            vertLines: { color: '#2d3a4d' },
+            horzLines: { color: '#2d3a4d' },
+          },
+          timeScale: {
+            timeVisible: true,
+            secondsVisible: false,
+            borderColor: '#2d3a4d',
+          },
+          rightPriceScale: {
+            borderColor: '#2d3a4d',
+          },
+          crosshair: {
+            horzLine: { color: '#58a6ff', style: 2 },
+            vertLine: { color: '#58a6ff', style: 2 },
+          },
+        });
+        pvAreaSeries = pvChart.addAreaSeries({
+          topColor: 'rgba(88, 166, 255, 0.4)',
+          bottomColor: 'rgba(88, 166, 255, 0.05)',
+          lineColor: '#58a6ff',
+          lineWidth: 2,
+          priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
+        });
+
+        const ro = new ResizeObserver(() => {
+          pvChart.applyOptions({ width: chartEl.clientWidth });
+        });
+        ro.observe(chartEl);
+      }
+
+      pvAreaSeries.setData(points);
+      pvChart.timeScale().fitContent();
+    }
+
+    // --- Main refresh: fetch once, distribute to renderers ---
 
     async function refresh() {
       document.getElementById('refresh').disabled = true;
       setStatus('Refreshing…', null);
-      const [t, b, p, o] = await Promise.all([
-        loadServerTime(),
-        loadBalanceAndTicker(),
-        loadPendingCount(),
-        loadOrders(),
+      setCardLoading('time', true);
+      setCardLoading('balance', true);
+      setCardLoading('pending', true);
+
+      const [timeResult, balanceResult, tickerResult, pendingResult, ordersResult] = await Promise.allSettled([
+        fetchApi('/server_time'),
+        fetchApi('/balance'),
+        fetchApi('/ticker'),
+        fetchApi('/pending_count'),
+        fetchApi('/orders?limit=200'),
       ]);
+
+      const t = renderServerTime(timeResult);
+      const b = renderPortfolio(balanceResult, tickerResult);
+      const p = renderPendingCount(pendingResult);
+      renderOrders(ordersResult);
+      renderChart(balanceResult, tickerResult, ordersResult);
+
       const ok = t && b && p;
       setStatus(ok ? 'Connected' : 'Some data failed. Check credentials and API.', ok);
       document.getElementById('refresh').disabled = false;
