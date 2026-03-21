@@ -168,7 +168,7 @@
   </div>
 
   <div class="card" id="card-pv-chart" style="margin-bottom: 1rem;">
-    <h2>Portfolio Value</h2>
+    <h2 style="display: flex; align-items: center; gap: 0.75rem;">Portfolio Value <span id="pv-pnl"></span></h2>
     <div id="pv-chart" style="height: 280px;"></div>
     <div id="pv-chart-empty" class="empty" hidden>No filled orders to chart.</div>
     <div id="pv-chart-err" class="err-msg" hidden></div>
@@ -511,8 +511,9 @@
 
     let pvChart = null;
     let pvAreaSeries = null;
+    let pvBaselineLine = null;
 
-    function reconstructPortfolioHistory(balanceData, tickerData, ordersData) {
+    function reconstructPortfolioHistory(balanceData, tickerData, ordersData, initialBalance) {
       const holdings = parseWallet(balanceData);
       if (Object.keys(holdings).length === 0) return [];
 
@@ -569,6 +570,11 @@
 
       points.reverse();
 
+      if (initialBalance > 0 && points.length > 0) {
+        const earliestSec = points[0].time - 1;
+        points.unshift({ time: earliestSec, value: initialBalance });
+      }
+
       const seen = new Set();
       const deduped = [];
       for (const p of points) {
@@ -580,11 +586,13 @@
       return deduped;
     }
 
-    function renderChart(balanceResult, tickerResult, ordersResult) {
+    function renderChart(balanceResult, tickerResult, ordersResult, configResult) {
       const chartEl = document.getElementById('pv-chart');
       const emptyEl = document.getElementById('pv-chart-empty');
       const errEl = document.getElementById('pv-chart-err');
+      const pnlEl = document.getElementById('pv-pnl');
       errEl.hidden = true;
+      if (pnlEl) pnlEl.textContent = '';
 
       if (balanceResult.status === 'rejected' || tickerResult.status === 'rejected' || ordersResult.status === 'rejected') {
         const err = balanceResult.reason || tickerResult.reason || ordersResult.reason;
@@ -595,7 +603,11 @@
         return;
       }
 
-      const points = reconstructPortfolioHistory(balanceResult.value, tickerResult.value, ordersResult.value);
+      const initialBalance = (configResult && configResult.status === 'fulfilled' && configResult.value)
+        ? Number(configResult.value.initial_balance || 0)
+        : 0;
+
+      const points = reconstructPortfolioHistory(balanceResult.value, tickerResult.value, ordersResult.value, initialBalance);
 
       if (points.length < 2) {
         emptyEl.hidden = false;
@@ -605,6 +617,15 @@
 
       emptyEl.hidden = true;
       chartEl.style.display = '';
+
+      if (pnlEl && initialBalance > 0) {
+        const currentPV = points[points.length - 1].value;
+        const pnlUsd = currentPV - initialBalance;
+        const pnlPct = (pnlUsd / initialBalance) * 100;
+        const sign = pnlUsd >= 0 ? '+' : '';
+        const color = pnlUsd >= 0 ? 'var(--success)' : 'var(--error)';
+        pnlEl.innerHTML = `<span style="color: ${color}; font-size: 0.875rem;">${sign}$${fmtUsd(Math.abs(pnlUsd))} (${sign}${pnlPct.toFixed(2)}%)</span>`;
+      }
 
       if (!pvChart) {
         pvChart = LightweightCharts.createChart(chartEl, {
@@ -637,6 +658,15 @@
           priceFormat: { type: 'custom', formatter: (p) => '$' + p.toFixed(2) },
         });
 
+        pvBaselineLine = pvChart.addLineSeries({
+          color: '#8b949e',
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+
         const ro = new ResizeObserver(() => {
           pvChart.applyOptions({ width: chartEl.clientWidth });
         });
@@ -644,6 +674,16 @@
       }
 
       pvAreaSeries.setData(points);
+
+      if (initialBalance > 0 && points.length >= 2) {
+        pvBaselineLine.setData([
+          { time: points[0].time, value: initialBalance },
+          { time: points[points.length - 1].time, value: initialBalance },
+        ]);
+      } else {
+        pvBaselineLine.setData([]);
+      }
+
       pvChart.timeScale().fitContent();
     }
 
@@ -656,19 +696,20 @@
       setCardLoading('balance', true);
       setCardLoading('pending', true);
 
-      const [timeResult, balanceResult, tickerResult, pendingResult, ordersResult] = await Promise.allSettled([
+      const [timeResult, balanceResult, tickerResult, pendingResult, ordersResult, configResult] = await Promise.allSettled([
         fetchApi('/server_time'),
         fetchApi('/balance'),
         fetchApi('/ticker'),
         fetchApi('/pending_count'),
         fetchApi('/orders?limit=200'),
+        fetchApi('/config'),
       ]);
 
       const t = renderServerTime(timeResult);
       const b = renderPortfolio(balanceResult, tickerResult);
       const p = renderPendingCount(pendingResult);
       renderOrders(ordersResult);
-      renderChart(balanceResult, tickerResult, ordersResult);
+      renderChart(balanceResult, tickerResult, ordersResult, configResult);
 
       const ok = t && b && p;
       setStatus(ok ? 'Connected' : 'Some data failed. Check credentials and API.', ok);

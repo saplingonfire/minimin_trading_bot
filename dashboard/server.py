@@ -18,6 +18,11 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore[assignment]
+
 from roostoo.client import RoostooClient
 from roostoo.exceptions import RoostooAPIError
 
@@ -81,6 +86,27 @@ def _get_client(account: str | None = None) -> RoostooClient:
             "with ROOSTOO_API_KEY and ROOSTOO_SECRET_KEY)"
         )
     return RoostooClient(api_key=api_key, secret_key=secret_key, base_url=base_url)
+
+
+_DEFAULT_INITIAL_BALANCE_TEST = 50000
+_DEFAULT_INITIAL_BALANCE_LIVE = 1000000
+
+
+def _load_dashboard_config() -> dict:
+    """Read dashboard section from config.yaml. Returns {} if unavailable."""
+    if yaml is None:
+        return {}
+    config_path = Path(os.environ.get("BOT_CONFIG_PATH", "config.yaml"))
+    if not config_path.exists():
+        config_path = _env_path.parent / "config.yaml"
+    if not config_path.exists():
+        return {}
+    try:
+        with config_path.open() as f:
+            data = yaml.safe_load(f)
+        return (data or {}).get("dashboard") or {}
+    except Exception:
+        return {}
 
 
 app = FastAPI(title="Roostoo Dashboard API", version="0.1.0")
@@ -164,6 +190,21 @@ def api_exchange_info(account: str | None = Query(None, description="test or liv
         )
     except ValueError as e:
         raise HTTPException(status_code=503, detail={"message": str(e)})
+
+
+@app.get("/api/config")
+def api_config(account: str | None = Query(None, description="test or live")) -> dict:
+    """GET dashboard config (initial balance for PnL chart). No secrets exposed."""
+    if account is not None:
+        use_live = account.strip().lower() == "live"
+    else:
+        use_live = _parse_bool(os.environ.get(ENV_LIVE))
+    dashboard_cfg = _load_dashboard_config()
+    if use_live:
+        initial_balance = dashboard_cfg.get("initial_balance_live", _DEFAULT_INITIAL_BALANCE_LIVE)
+    else:
+        initial_balance = dashboard_cfg.get("initial_balance_test", _DEFAULT_INITIAL_BALANCE_TEST)
+    return {"initial_balance": float(initial_balance)}
 
 
 @app.get("/api/ticker")
