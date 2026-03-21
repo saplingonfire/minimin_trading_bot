@@ -101,6 +101,34 @@ class HybridTrendCrossSectionalStrategy(Strategy):
     def _record_trade(self, pair: str, now_ms: int) -> None:
         self._last_trade_time[pair] = now_ms
 
+    def _sell_stale_positions(
+        self,
+        context: TradingContext,
+        tradeable: list[str],
+        now_ms: int,
+    ) -> list[Signal]:
+        """SELL any held asset that is tradeable but no longer in _target_weights."""
+        signals: list[Signal] = []
+        target_bases = {parse_pair(p)[0] for p in self._target_weights}
+        for pair in tradeable:
+            base, _ = parse_pair(pair)
+            if base in target_bases:
+                continue
+            if self._is_pair_on_cooldown(pair, now_ms):
+                continue
+            qty = get_balance_free(context.balance, base)
+            if qty <= 0:
+                continue
+            price = get_price(context.ticker, pair)
+            if price <= 0:
+                continue
+            value = qty * price
+            if value < self._min_trade_usd:
+                continue
+            signals.append(PlaceOrderSignal(pair, "SELL", qty, "MARKET", None))
+            self._record_trade(pair, now_ms)
+        return signals
+
     def _is_daily_regime_time(self, server_time_ms: int) -> bool:
         """True if we should re-evaluate regime (once per UTC day)."""
         day_key = server_time_ms // MS_PER_DAY
@@ -233,6 +261,8 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             target_usd[pair] = portfolio_value * w
 
         now = context.server_time_ms
+        stale_sells = self._sell_stale_positions(context, pairs, now)
+
         sell_signals: list[Signal] = []
         buy_signals: list[Signal] = []
         for pair in self._target_weights:
@@ -264,7 +294,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
                     buy_signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
                     self._record_trade(pair, now)
 
-        return sell_signals + buy_signals
+        return stale_sells + sell_signals + buy_signals
 
     def get_managed_pairs(self) -> list[str] | None:
         return list(self._target_weights.keys()) if self._target_weights else None

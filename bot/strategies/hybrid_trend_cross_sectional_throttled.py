@@ -144,6 +144,8 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
         for pair, w in self._target_weights.items():
             target_usd[pair] = portfolio_value * w
 
+        stale_sells = self._sell_stale_positions(context, pairs, now)
+
         sell_signals: list[Signal] = []
         buy_signals: list[Signal] = []
         for pair in self._target_weights:
@@ -175,4 +177,4 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
                     buy_signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
                     self._record_trade(pair, now)
 
-        return sell_signals + buy_signals
+        return stale_sells + sell_signals + buy_signals
