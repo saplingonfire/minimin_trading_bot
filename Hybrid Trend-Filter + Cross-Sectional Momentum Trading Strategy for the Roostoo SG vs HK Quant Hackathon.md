@@ -77,21 +77,61 @@ where each \( P_{t-i} \) is the daily close (or the last sampled price in a 24-h
 
 ### 2.3 Evaluation Frequency and Whipsaw Prevention
 
-The regime is evaluated **once per day at a fixed UTC time** (e.g., 00:00 UTC). Intra-day re-evaluation is intentionally avoided to prevent over-reaction to transient volatility.
+The regime is evaluated **once per day at a fixed UTC time** (default 00:00 UTC, configurable via `regime_utc_hour`). Intra-day re-evaluation is intentionally avoided to prevent over-reaction to transient volatility.
 
-**Whipsaw buffer**: Require that the signal persists for **2 consecutive daily evaluations** before switching regime. A one-day flip does not trigger a full portfolio liquidation.
+**Whipsaw buffer**: Require that the signal persists for **2 consecutive daily evaluations** before switching from risk-off to risk-on. A single day above the MA does not flip the regime; a `regime_candidate` state tracks the pending transition.
 
 ```python
-# Pseudocode: regime evaluation
-if btc_price > ma20 and prev_regime == 'risk-on':
-    regime = 'risk-on'
-elif btc_price > ma20 and prev_regime == 'risk-off':
-    # transition candidate: require confirmation next day
-    regime_candidate = 'risk-on'
-    regime = 'risk-off'  # hold until confirmed
-elif btc_price <= ma20:
-    regime = 'risk-off'
-    regime_candidate = None
+# Implemented in bot/regime.py — compute_regime()
+def compute_regime(btc_daily_closes, ma_window, current_regime, regime_candidate):
+    ma_vals = sma(btc_daily_closes, ma_window)
+    last_close = btc_daily_closes[-1]
+    last_ma = ma_vals[-1]
+    above = last_close > last_ma
+
+    if above and current_regime == "risk-on":
+        return ("risk-on", None)
+    if above and current_regime == "risk-off":
+        if regime_candidate == "risk-on":
+            return ("risk-on", None)          # confirmed: 2nd consecutive day above
+        return ("risk-off", "risk-on")        # 1st day above — candidate, stay risk-off
+    return ("risk-off", None)                 # below MA — reset
+```
+
+### 2.4 Throttled Variant: Three-Tier Regime (`hybrid_trend_cross_sectional_throttled`)
+
+The throttled variant replaces the binary regime with a **three-tier system** that adds a transitional soft-exposure state, reducing the impact of whipsaw on portfolio allocation:
+
+\[
+\text{regime}(t) = \begin{cases} \text{risk\_on\_strong} & \text{if } P_t > MA_{20}(t) \\ \text{risk\_on\_soft} & \text{if } P_t \leq MA_{20}(t) \text{ and consecutive\_below} < 2 \\ \text{risk\_off} & \text{if consecutive\_below} \geq 2 \end{cases}
+\]
+
+Target exposure is adjusted per tier:
+
+| Regime | Target Exposure | Condition |
+|--------|----------------|-----------|
+| `risk_on_strong` | 80% (configurable `strong_exposure`) | Close > MA20 |
+| `risk_on_soft` | 35% (configurable `soft_exposure`) | Close ≤ MA20, but < 2 consecutive days below |
+| `risk_off` | 0% (full cash) | ≥ 2 consecutive daily closes below MA20 |
+
+In `prelim_mode` (default `true`), the soft tier allows reduced but non-zero exposure, hedging against false bear signals. When `prelim_mode` is `false`, it behaves identically to the binary variant (risk-on or risk-off only).
+
+```python
+# Implemented in bot/strategies/hybrid_trend_cross_sectional_throttled.py
+def _update_btc_regime(self, context):
+    btc_closes = context.price_store.get_daily_closes("BTC/USD", ma_window + 2)
+    ma_vals = sma(btc_closes, ma_window)
+    last_close, last_ma = btc_closes[-1], ma_vals[-1]
+
+    if last_close > last_ma:
+        self._consecutive_btc_below_ma = 0
+        self._regime = "risk_on_strong"
+    else:
+        self._consecutive_btc_below_ma += 1
+        if self._consecutive_btc_below_ma >= consecutive_below_to_off:  # default: 2
+            self._regime = "risk_off"
+        else:
+            self._regime = "risk_on_soft"
 ```
 
 ***
@@ -100,14 +140,15 @@ elif btc_price <= ma20:
 
 ### 3.1 Universe Definition
 
-The full universe consists of all tradeable pairs on the Roostoo exchange, retrieved via `GET /v3/exchangeInfo`. Apply the following filters before ranking:[^2]
+The full universe consists of all tradeable pairs on the Roostoo exchange, retrieved via `GET /v3/exchangeInfo`. The `tradeable_pairs()` utility (in `bot/strategies/utils.py`) applies the following filters before ranking:[^2]
 
-- `CanTrade == True`
-- **Minimum lookback**: Coin must have at least 3 days of sampled price history in local logs.
-- **Minimum volume proxy**: `UnitTradeValue` (from `/v3/ticker`) > some floor threshold (e.g., $1M 24h USD volume). This filters out illiquid or thinly traded altcoins.[^7]
-- **Exclude outliers**: Remove coins with 24-hour Change > ±50% (possible data error or extreme pump event).
+- `CanTrade == True` (from exchange info)
+- **Exclude pairs**: An optional blocklist (`exclude_pairs` in `config.yaml` or `BOT_EXCLUDE_PAIRS` env var) removes specified pairs. Accepts Binance tickers (`PAXGUSDT`), base-only (`PAXG`), or Roostoo format (`PAXG/USD`) — all normalized to `BASE/USD` for matching.
+- **Minimum lookback**: Coin must have at least `min_days_history` (default 3) days of sampled price history in the local price store.
+- **Minimum volume proxy**: `UnitTradeValue` (from `/v3/ticker`) ≥ `min_volume_usd` (default $500,000 24h USD volume). This filters out illiquid or thinly traded altcoins.[^7]
+- **Exclude outliers**: Remove coins with 24-hour `Change` > ±50% (possible data error or extreme pump event).
 
-This typically yields a tradeable universe of 40–60 coins from the 60+ listed.[^2]
+This typically yields a tradeable universe of ~60 coins from the 66 listed.[^2]
 
 ### 3.2 Momentum Features
 
@@ -147,10 +188,32 @@ Floor volatility at a minimum of 1% to avoid division-by-zero for stablecoin-lik
 
 ### 3.4 Ranking and Selection Rule
 
-1. Sort all universe coins by `MomScore` descending.
-2. Select the **top N = 5** coins (adjustable: 3–8 based on portfolio concentration preference).
-3. Break ties by 1-day return.
-4. Exclude the bottom 20% of coins by `MomScore` even if they appear in a smaller universe (anti-momentum guard).
+Implemented in `HybridTrendCrossSectionalStrategy._cross_sectional_rank()` and `_compute_target_weights()`:
+
+1. For each eligible pair, compute `MomScore` and 7-day rolling volatility from the local price store.
+2. Sort all universe coins by `MomScore` descending.
+3. **Anti-momentum guard**: Exclude the bottom 20% of coins by `MomScore` — even in a small universe, the worst performers are removed.
+4. Select the **top N = 4** coins from the remaining pool (configurable: `N` in `config.yaml`, tuned from 5 to 4 for the hackathon to increase per-coin conviction).
+
+```python
+# Implemented in bot/strategies/hybrid_trend_cross_sectional.py
+def _cross_sectional_rank(self, context):
+    scored = []
+    for pair in tradeable_pairs(context.exchange_info, exclude=self._exclude_pairs):
+        if store.count_days_with_data(pair) < self._min_days_history:
+            continue
+        if get_volume_usd(context.ticker, pair) < self._min_volume_usd:
+            continue
+        if abs(get_change_pct(context.ticker, pair)) > 0.50:
+            continue
+        closes = store.get_daily_closes(pair, 8)  # need 8 for r7
+        r1, r3, r7 = compute_returns(closes)
+        mom = 0.2 * r1 + 0.3 * r3 + 0.5 * r7
+        vol = rolling_volatility_7d(closes)        # floored at 1%
+        scored.append((pair, mom, vol))
+    scored.sort(key=lambda x: -x[1])               # MomScore desc
+    return scored
+```
 
 ***
 
@@ -158,16 +221,39 @@ Floor volatility at a minimum of 1% to avoid division-by-zero for stablecoin-lik
 
 ### 4.1 Combined Signal Logic
 
-```
-IF regime == 'risk-off':
-    target_positions = {all coins: 0.0}  # full cash
-    action = liquidate all holdings
+The `next()` method on each strategy tick executes the following flow. Both variants share this core logic, with the throttled version adding a `risk_on_soft` tier between risk-on and risk-off.
 
-ELIF regime == 'risk-on':
-    ranked_coins = cross_sectional_rank(universe)
-    selected = top_N(ranked_coins, N=5)
-    target_positions = compute_weights(selected)
-    action = rebalance toward target_positions
+```python
+# Implemented in bot/strategies/hybrid_trend_cross_sectional.py — next()
+def next(self, context):
+    if context.risk_force_cash:               # kill switch override
+        self._regime = "risk-off"
+        return []
+
+    pairs = tradeable_pairs(context.exchange_info, exclude=self._exclude_pairs)
+    portfolio_value = self._portfolio_value(context, pairs)
+
+    # Drawdown ladder: adjust effective exposure based on peak drawdown
+    if should_restore_exposure(portfolio_value, self._portfolio_peak):
+        self._effective_exposure = self._target_exposure
+    else:
+        exposure, force_risk_off = get_drawdown_exposure(portfolio_value, self._portfolio_peak, ...)
+        self._effective_exposure = exposure
+        if force_risk_off:                    # >15% drawdown — force cash
+            self._regime = "risk-off"
+            return []
+
+    # Regime re-evaluation (once per UTC day)
+    if self._is_daily_regime_time(now):
+        self._compute_regime(context)
+
+    # Cross-sectional re-ranking (every rank_interval_min, default 60 min)
+    if self._should_rerank(now):
+        self._target_weights = self._compute_target_weights(context)
+
+    # Generate SELL signals first, then BUY signals
+    signals = compute_order_deltas(self._target_weights, portfolio_value, context)
+    return sell_signals + buy_signals
 ```
 
 ### 4.2 Position Sizing: Inverse Volatility Weighting
@@ -178,21 +264,36 @@ For each selected coin \( i \) in the top-N set:
 w_i^{\text{raw}} = \frac{1 / \sigma_i}{\sum_{j \in \text{top-N}} 1/\sigma_j}
 \]
 
-Apply a per-coin cap (e.g., max 20% of portfolio) and a portfolio exposure target (e.g., 85% invested, 15% cash buffer):
+Apply a per-coin cap and portfolio exposure target. The implementation uses `max_weight_per_coin: 0.25` (tuned from 0.20 for top-4 selection) and `target_exposure: 0.80` (tuned from 0.85 to maintain a 20% cash buffer):
 
 \[
-w_i = \min\left(w_i^{\text{raw}}, 0.20\right) \cdot 0.85
+w_i = \min\left(w_i^{\text{raw}}, 0.25\right)
 \]
 
-Then renormalize weights to sum to 0.85.
-
-**Alternative: Equal-weight among top-N** (simpler, use as fallback):
+Then renormalize capped weights to sum to `effective_exposure` (which is dynamically reduced by the drawdown ladder):
 
 \[
-w_i = \frac{0.85}{N} \quad \forall i \in \text{top-N}
+w_i^{\text{final}} = \frac{w_i^{\text{capped}}}{\sum_j w_j^{\text{capped}}} \cdot \text{effective\_exposure}
 \]
 
-Inverse volatility weighting is the theoretically preferred approach, as it allocates proportionally less to riskier coins, reducing portfolio variance. In practice, for a small team under time pressure, equal-weight is an acceptable starting point.[^7]
+```python
+# Implemented in bot/strategies/hybrid_trend_cross_sectional.py — _compute_target_weights()
+def _compute_target_weights(self, context):
+    if self._regime == "risk-off":
+        return {}
+    ranked = self._cross_sectional_rank(context)
+    n_cut = max(1, int(len(ranked) * 0.20))       # remove bottom 20%
+    top_pool = ranked[:-n_cut]
+    top_n = top_pool[:self._n]                     # select top N
+    inv_vols = {p: 1.0 / vol for p, _, vol in top_n}
+    total_iv = sum(inv_vols.values())
+    raw = {p: inv_vols[p] / total_iv for p in inv_vols}
+    capped = {p: min(w, self._max_weight_per_coin) for p, w in raw.items()}
+    total_capped = sum(capped.values())
+    return {p: (capped[p] / total_capped) * self._effective_exposure for p in capped}
+```
+
+Inverse volatility weighting is the implemented approach. It allocates proportionally less to riskier coins, reducing portfolio variance.[^7]
 
 ### 4.3 Scoring Function with Signal Strength
 
@@ -210,12 +311,13 @@ This approach naturally gives more weight to coins with strong momentum *and* lo
 
 ### 4.4 Signal Update Frequency
 
-| Signal | Update Frequency | Rationale |
-|--------|-----------------|-----------|
-| BTC regime (MA20) | Once per day (00:00 UTC) | Slow filter, avoids whipsaw |
-| Cross-sectional ranks | Every 60 minutes | Balances freshness vs. churn |
-| Target weights | Every 60 minutes (with regime-on) | Drives rebalancing decisions |
-| Order placement | At most 1 order per 60 seconds | Respects rate limits[^1] |
+| Signal | Update Frequency | Implementation | Rationale |
+|--------|-----------------|----------------|-----------|
+| BTC regime (MA20) | Once per UTC day | `_is_daily_regime_time()` checks `server_time_ms // MS_PER_DAY` | Slow filter, avoids whipsaw |
+| Cross-sectional ranks | Every 60 minutes (configurable `rank_interval_min`) | `_should_rerank()` checks elapsed ms since last rank | Balances freshness vs. churn |
+| Target weights | Every 60 minutes (during risk-on) | Recomputed in `_compute_target_weights()` | Drives rebalancing decisions |
+| Order placement | At most 2 orders per cycle, spaced 65 sec apart | `max_orders_per_cycle: 2`, `order_spacing_sec: 65` | Respects rate limits[^1] |
+| Tick cycle | Every 300 seconds (5 min) | `execution.cycle_sec: 300` | Data freshness vs. API usage |
 
 ***
 
@@ -280,30 +382,18 @@ def build_daily_bar(df, date):
 
 ### 6.2 Target Weight Computation
 
+The actual implementation lives in `_compute_target_weights()` (see Section 4.2 above). Key differences from the original plan:
+
+- **N = 4** (tuned from 5 to increase per-coin conviction in a 25-day window)
+- **target_exposure = 0.80** (tuned from 0.85 for a larger cash buffer)
+- **max_weight_per_coin = 0.25** (raised from 0.20 to complement N=4)
+- **effective_exposure** is dynamic — reduced by the drawdown ladder (see Section 8.2)
+
+USD target conversion is computed directly in `next()`:
+
 ```python
-def compute_target_weights(ranked_coins, regime, portfolio_value, config):
-    if regime == 'risk-off':
-        return {coin: 0.0 for coin in all_coins}
-
-    top_n = ranked_coins[:config['N']]  # N=5
-    
-    # Inverse-vol weighting
-    inv_vols = {c: 1.0 / max(vol[c], 0.01) for c in top_n}
-    total_iv = sum(inv_vols.values())
-    raw_weights = {c: inv_vols[c] / total_iv for c in top_n}
-    
-    # Apply per-coin cap
-    capped = {c: min(w, config['max_weight']) for c, w in raw_weights.items()}
-    
-    # Normalize to target exposure
-    total_capped = sum(capped.values())
-    target_exposure = config['target_exposure']  # 0.85
-    
-    weights = {c: (capped[c] / total_capped) * target_exposure for c in top_n}
-    return weights
-
-def weights_to_usd(weights, portfolio_value):
-    return {c: w * portfolio_value for c, w in weights.items()}
+# Implemented in next() — both variants
+target_usd = {pair: w * portfolio_value for pair, w in self._target_weights.items()}
 ```
 
 ### 6.3 Rebalancing Logic
@@ -320,8 +410,9 @@ Compare to current holdings from `/v3/balance`. Compute delta:
 \Delta q_i = \text{target\_qty}(i) - \text{current\_qty}(i)
 \]
 
-- If \( |\Delta q_i| \cdot P_i < \text{min\_trade\_usd} \) (e.g., $50), skip — avoids churning on trivial adjustments.
+- If \( |\Delta q_i| \cdot P_i < \text{min\_trade\_usd} \) (default $25, tuned from $50 for tighter rebalancing), skip — avoids churning on trivial adjustments.
 - Process **SELL orders first**, then BUY orders, to free up USD capital before purchasing.
+- BUY orders are capped by available `quote_free` (USD + USDT balance) to avoid over-allocation.
 
 ***
 
@@ -329,61 +420,59 @@ Compare to current holdings from `/v3/balance`. Compute delta:
 
 ### 7.1 Main Trading Loop Architecture
 
-The bot runs a continuous `while True` loop on the EC2 instance, sleeping between cycles:[^1]
+The bot runs a continuous `while not _shutdown_requested` loop on the EC2 instance, sleeping between cycles. The full implementation is in `bot/runner.py`:[^1]
 
 ```python
-# Main loop skeleton
-import time, logging, yaml
-from datetime import datetime, timezone
+# Implemented in bot/runner.py — run()
+def run(settings: BotSettings):
+    client = RoostooClient(api_key=..., secret_key=..., base_url=...)
+    exchange_info = client.get_exchange_info()
+    executor = Executor(client, dry_run=settings.dry_run, exchange_info=exchange_info,
+                        order_spacing_sec=65, trades_log_path="trades.log")
+    strategy = STRATEGIES[settings.strategy_name](settings.strategy_params)
 
-config = yaml.safe_load(open('config.yaml'))
-state = initialize_state(config)  # loads price history, positions
+    # Warmup: if price store has < 20 days of BTC data, fetch from Binance public API
+    price_store = PriceStore("prices.db")
+    if price_store.count_days_with_data("BTC/USD") < 20:
+        warmup_from_binance_klines(price_store, limit=30)
 
-while True:
-    try:
-        cycle_start = time.time()
-        now_utc = datetime.now(timezone.utc)
+    signal.signal(signal.SIGTERM, _shutdown_handler)
+    signal.signal(signal.SIGINT, _shutdown_handler)
+    strategy.on_start()
 
-        # Step 1: Fetch latest prices (1 API call — all tickers at once)
-        tickers = fetch_all_tickers()
-        log_prices(tickers, now_utc)
+    while not _shutdown_requested:
+        tick_start = time.perf_counter()
 
-        # Step 2: Update regime (once per day or forced re-eval)
-        if is_daily_regime_time(now_utc) or state.regime_stale:
-            state.regime = compute_regime(state.price_history['BTC'])
-            logging.info(f"Regime: {state.regime}")
+        # Step 1: Build context — fetches server_time, ticker, balance, pending orders
+        context = build_context(client, exchange_info=exchange_info, price_store=price_store)
 
-        # Step 3: Recompute cross-sectional ranks (every 60 min)
-        if minutes_since_last_rank(state) >= 60:
-            state.ranks = cross_sectional_rank(tickers, state.price_history, config)
-            state.target_weights = compute_target_weights(state.ranks, state.regime, config)
-            state.last_rank_time = now_utc
+        # Step 2: Kill switch check (API errors, clock drift, BTC daily move)
+        halt, force_cash = kill_switch_check(consecutive_api_errors, context.server_time_ms, btc_change)
+        if halt:
+            sys.exit(1)
+        if force_cash:
+            context = dataclasses.replace(context, risk_force_cash=True)
 
-        # Step 4: Compute order deltas
-        current_positions = fetch_balance()
-        orders = compute_orders(state.target_weights, current_positions, tickers, config)
+        # Step 3: Append ticker snapshot to price store (accumulates daily bars)
+        price_store.append_ticker_snapshot(context.ticker, context.server_time_ms)
 
-        # Step 5: Place at most 1-2 orders per cycle (rate-limit aware)
-        orders_this_cycle = 0
-        for order in prioritized_orders(orders):
-            if orders_this_cycle >= config['max_orders_per_cycle']:
-                break
-            result = place_order(order)
-            log_order(result)
-            orders_this_cycle += 1
-            time.sleep(config['order_spacing_sec'])  # ~5-10 sec between orders
+        # Step 4: Strategy tick — regime, ranking, weight computation, order signals
+        signals = strategy.next(context)
 
-        # Step 6: Risk checks
-        if portfolio_drawdown(state) > config['max_drawdown']:
-            trigger_risk_off(state)
+        # Step 5: Cap signals to max_orders_per_cycle (default 2)
+        if len(signals) > max_orders_per_cycle:
+            signals = signals[:max_orders_per_cycle]
 
-        # Sleep remainder of cycle
-        elapsed = time.time() - cycle_start
-        time.sleep(max(0, config['cycle_sec'] - elapsed))  # cycle_sec=300 (5 min)
+        # Step 6: Execute via Executor (validation, precision, risk guards, retries, JSONL log)
+        results = executor.execute(signals, context_ticker=context.ticker)
 
-    except Exception as e:
-        logging.error(f"Loop error: {e}", exc_info=True)
-        time.sleep(60)
+        logger.info("tick tick_index=%s signals=%s build_context_ms=%.0f execute_ms=%.0f", ...)
+        time.sleep(settings.tick_seconds)  # default 300s (5 min)
+
+    # Graceful shutdown: cancel pending orders if configured
+    if settings.cancel_orders_on_stop:
+        executor.cancel_orders_for_pairs(strategy.get_managed_pairs())
+    strategy.on_stop()
 ```
 
 ### 7.2 Rate Limit Management
@@ -391,28 +480,25 @@ while True:
 The Roostoo API enforces a hard rate limit (approximately one trade per minute). Best practices for staying within limits:[^1]
 
 - **Batch ticker fetches**: A single call to `/v3/ticker` (without `pair`) returns all tickers at once — this is one API call for 60+ coins. Never loop per-coin.[^2]
-- **Order pacing**: Place at most 1 order per 60-second window (conservative budget). Use `time.sleep(65)` after each order.
-- **Exponential backoff**: On HTTP 429, wait 2× the current wait time before retrying.[^11]
-- **Cycle cadence**: Data fetch every 5 minutes; order placement only if material rebalancing is needed; full re-rank every 60 minutes.
+- **Order pacing**: Place at most 2 orders per cycle, spaced 65 seconds apart (`order_spacing_sec: 65`). The `Executor` enforces this with a `time.sleep(spacing)` between consecutive place orders.
+- **Exponential backoff**: On HTTP 429/500/502/503, retry up to 3 times with delays of 1s, 2s, 4s.[^11]
+- **Cycle cadence**: Data fetch every 5 minutes (`cycle_sec: 300`); order placement only if material rebalancing is needed (delta ≥ `min_trade_usd`); full re-rank every 60 minutes.
 
 ```python
-def safe_request(func, *args, max_retries=3, **kwargs):
-    wait = 5
-    for attempt in range(max_retries):
+# Implemented in bot/execution.py — _request_with_retry()
+RETRY_STATUSES = (429, 500, 502, 503)
+RETRY_DELAYS = (1.0, 2.0, 4.0)
+
+def _request_with_retry(self, fn, action):
+    for i, delay in enumerate(RETRY_DELAYS):
         try:
-            resp = func(*args, **kwargs)
-            if resp.status_code == 429:
-                logging.warning(f"Rate limited. Waiting {wait}s...")
-                time.sleep(wait)
-                wait *= 2
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            logging.error(f"Request failed (attempt {attempt+1}): {e}")
-            time.sleep(wait)
-            wait *= 2
-    return None
+            return fn()
+        except RoostooAPIError as e:
+            if e.status_code in RETRY_STATUSES and i < MAX_RETRIES - 1:
+                logger.warning("retry %s after %s status=%s", action, delay, e.status_code)
+                time.sleep(delay)
+            else:
+                return {"error": "api_error", "message": e.message, "status_code": e.status_code}
 ```
 
 ### 7.3 HMAC Authentication Helper
@@ -442,13 +528,13 @@ def get_signed_headers(params: dict) -> dict:
 
 ### 8.1 Per-Asset Limits
 
-| Parameter | Default Value | Notes |
-|-----------|--------------|-------|
-| Max weight per coin | 20% of portfolio | Prevents single-coin concentration |
-| Max number of coins held | 5 (N) | Manageable for small team |
-| Minimum trade size | $50 USD notional | Avoids trivial rebalances |
-| Max daily trades | ~20 orders | ~1 per hour × two per rebalance |
-| Commission budget (daily) | $100 (0.2% of portfolio) | Monitor and reduce N or frequency if exceeded |
+| Parameter | Tuned Value | Config Key | Notes |
+|-----------|------------|------------|-------|
+| Max weight per coin | 25% of portfolio | `max_weight_per_coin: 0.25` | Prevents single-coin concentration (raised from 20% for N=4) |
+| Max number of coins held | 4 (N) | `N: 4` | Increased conviction per name in 25-day window |
+| Minimum trade size | $25 USD notional | `min_trade_usd: 25.0` | Lowered from $50 for tighter rebalancing |
+| Max orders per cycle | 2 | `max_orders_per_cycle: 2` | Rate-limit safe with 65s spacing |
+| Order spacing | 65 seconds | `order_spacing_sec: 65` | Conservative buffer above 60s rate limit |
 
 ### 8.2 Portfolio-Level Drawdown Control
 
@@ -458,19 +544,24 @@ Track portfolio peak value \( V_{\text{peak}} \) and current value \( V_t \):
 \text{DD}(t) = \frac{V_t - V_{\text{peak}}}{V_{\text{peak}}}
 \]
 
-**Drawdown-based de-risking ladder:**
+**Drawdown-based de-risking ladder** (implemented in `bot/risk.py — get_drawdown_exposure()`):
 
 ```python
-if DD < -0.05:   # 5% drawdown: reduce exposure from 85% to 70%
-    config['target_exposure'] = 0.70
-if DD < -0.10:   # 10% drawdown: reduce to 50%
-    config['target_exposure'] = 0.50
-if DD < -0.15:   # 15% drawdown: go to full cash regardless of regime
-    state.regime = 'risk-off_forced'
-    liquidate_all_positions()
+# Implemented in bot/risk.py
+DRAWDOWN_SOFT_05 = -0.05
+DRAWDOWN_SOFT_10 = -0.10
+DRAWDOWN_HARD_15 = -0.15
+RECOVERY_RATIO = 0.95
+
+def get_drawdown_exposure(portfolio_value, peak_value, current_target_exposure):
+    drawdown = (portfolio_value - peak_value) / peak_value
+    if drawdown <= -0.15:   return (0.0, True)   # force risk-off, full cash
+    if drawdown <= -0.10:   return (0.50, False)  # reduce to 50%
+    if drawdown <= -0.05:   return (0.70, False)  # reduce to 70%
+    return (current_target_exposure, False)       # normal exposure
 ```
 
-Restore normal exposure only after the portfolio recovers to 95% of peak and the regime filter confirms risk-on.
+Restore normal exposure only after the portfolio recovers to **95% of peak** (`should_restore_exposure()`) and the regime filter confirms risk-on. The drawdown ladder integrates directly into the `next()` method — `effective_exposure` is passed through to `_compute_target_weights()`, dynamically scaling all position weights.
 
 ### 8.3 Per-Position Soft Stops
 
@@ -484,26 +575,27 @@ If `LastPrice(i) < stop_level(i)`, generate a SELL signal for coin \( i \) regar
 
 ### 8.4 Kill Switch Conditions
 
-The bot automatically halts and closes all positions under the following conditions:
+Implemented in `bot/risk.py — kill_switch_check()`. Returns `(halt_bot, force_risk_off)` — the runner calls this every tick:
 
-- **Repeated API failures**: ≥5 consecutive failed requests (could indicate network, credential, or server issue).
-- **Server time drift**: If `abs(local_time - server_time) > 60s`, authentication will fail. Halt and alert.[^2]
-- **Abnormal price spike**: Any coin's 24-hour Change > ±80% triggers exclusion from that coin only. If BTC itself shows > ±40% in one day, trigger full cash exit.
-- **Max daily loss**: If portfolio drops > 20% in a single day, stop bot and send alert.
+- **Repeated API failures**: ≥ `max_consecutive_errors` (default 5) consecutive failed requests → `halt_bot=True`. The runner calls `sys.exit(1)`.[^2]
+- **Server time drift**: If `abs(local_time - server_time) > 60s`, authentication will fail → `halt_bot=True`.[^2]
+- **BTC daily move**: If BTC 24h `Change` > ± `btc_daily_move_kill` (default 0.40) → `force_risk_off=True`. The runner sets `context.risk_force_cash=True`, which makes the strategy return empty signals (full cash).
 
 ```python
-def kill_switch_check(state, tickers):
-    if state.consecutive_api_errors >= 5:
-        logging.critical("KILL SWITCH: API failures. Liquidating.")
-        liquidate_all(); sys.exit(1)
-    if abs(get_server_time() - time.time()*1000) > 60000:
-        logging.critical("KILL SWITCH: Clock drift. Halting.")
-        sys.exit(1)
-    btc_change = tickers.get('BTC/USD', {}).get('Change', 0)
-    if abs(btc_change) > 0.40:
-        logging.warning("BTC 40% daily move. Forcing cash.")
-        state.regime = 'risk-off_forced'
+# Implemented in bot/risk.py
+def kill_switch_check(consecutive_api_errors, server_time_ms, btc_change_pct,
+                      *, max_consecutive_errors=5, max_drift_ms=60_000, btc_daily_move_kill=0.40):
+    if consecutive_api_errors >= max_consecutive_errors:
+        return (True, True)    # halt + liquidate
+    drift = abs(server_time_ms - int(time.time() * 1000))
+    if drift > max_drift_ms:
+        return (True, True)    # halt + liquidate
+    if btc_change_pct is not None and abs(btc_change_pct) > btc_daily_move_kill:
+        return (False, True)   # keep running, force cash
+    return (False, False)      # normal
 ```
+
+On shutdown (SIGTERM/SIGINT or kill switch), the runner optionally cancels all pending orders for managed pairs (`cancel_orders_on_stop` in config) before calling `strategy.on_stop()`.
 
 ***
 
@@ -562,9 +654,9 @@ for date in backtest_dates:
 Run the backtest varying:
 - MA window: 10, 15, **20** (baseline), 25, 30 days
 - Momentum weights: equal across r1/r3/r7 vs baseline [0.2/0.3/0.5]
-- N (coins selected): 3, **5** (baseline), 7, 10
+- N (coins selected): 3, **4** (baseline), 5, 7
 - Rebalancing frequency: daily, every 12h, every 6h
-- Target exposure: 70%, **85%** (baseline), 95%
+- Target exposure: 60%, 70%, **80%** (baseline), 90%
 
 Accept the baseline parameters only if performance is reasonably stable (Sharpe > 1.0, drawdown < 25%) across most variations. This is the primary defense against overfitting.
 
@@ -613,42 +705,68 @@ Accept the baseline parameters only if performance is reasonably stable (Sharpe 
 
 | Component | Library | Notes |
 |-----------|---------|-------|
-| HTTP requests | `requests` or `httpx` | Both handle HMAC headers |
-| Data processing | `pandas`, `numpy` | Bar construction, MA, momentum |
-| Scheduler | `while True` + `time.sleep()` | Simpler than APScheduler for single process |
-| Config | `PyYAML` + `python-dotenv` | YAML config file; secrets via env vars |
-| Logging | Python `logging` (JSON formatter) | Structured logs; one file per day |
-| Storage | `sqlite3` or flat CSV | Lightweight; persist price history across restarts |
-| Process management | `systemd` or `screen`/`tmux` | Keep bot alive if shell disconnects |
+| HTTP requests | `requests` | HMAC auth handled by `roostoo.client.RoostooClient` |
+| Data processing | `math`, standard lib | No pandas/numpy — pure Python for MA, momentum, volatility |
+| Scheduler | `while not _shutdown_requested` + `time.sleep()` | Signal-based graceful shutdown (SIGTERM/SIGINT) |
+| Config | `PyYAML` + `python-dotenv` | YAML config file; secrets via `.env`; CLI overrides |
+| Logging | Python `logging` (structured key-value) | Tick summaries, order results, regime changes |
+| Trade audit | JSONL (`trades.log`) | Machine-readable order log via `Executor._append_trade()` |
+| Storage | `sqlite3` (`PriceStore`) | Lightweight; persists daily closes across restarts |
+| Process management | `tmux` | Keep bot alive if SSH disconnects |
 
 ### 10.3 Configuration File (`config.yaml`)
 
+Tuned for the hackathon context (50K mock wallet, 25-day window, Roostoo rate limits):
+
 ```yaml
 strategy:
-  N: 5                        # top-N coins to hold
+  N: 4                        # top-N coins (tuned from 5 for higher conviction)
   ma_window: 20               # days for BTC trend filter
   momentum_weights: [0.2, 0.3, 0.5]  # r1, r3, r7
-  target_exposure: 0.85
-  max_weight_per_coin: 0.20
-  min_trade_usd: 50.0
+  target_exposure: 0.80       # 80% invested, 20% cash buffer
+  max_weight_per_coin: 0.25   # raised from 0.20 for N=4
+  min_trade_usd: 25.0         # lowered from 50 for tighter rebalancing
   min_volume_usd: 500000
+  min_days_history: 3
+  rank_interval_min: 60       # re-rank every 60 min
+  regime_utc_hour: 0
+  max_orders_per_cycle: 2
+  order_spacing_sec: 65
+  db_path: ./prices.db
+
+  # Exclude problematic pairs from the tradeable universe
+  exclude_pairs: [
+    "PAXGUSDT",          # Gold peg: uncorrelated to BTC regime
+    "SUSDT",             # Stablecoin: zero-vol breaks inverse-vol weighting
+    "1000CHEEMSUSDT",    # Micro-cap meme: extreme spread risk
+  ]
+
+  risk:
+    max_consecutive_errors: 5
+    btc_daily_move_kill: 0.40
+
+  # Throttled variant only: three-tier regime
+  regime:
+    ma_window: 20
+    prelim_mode: true
+    strong_exposure: 0.80
+    soft_exposure: 0.35
+    consecutive_below_to_off: 2
 
 execution:
   cycle_sec: 300              # 5 min main loop
-  rank_interval_min: 60       # re-rank every 60 min
   max_orders_per_cycle: 2
   order_spacing_sec: 65
 
-risk:
-  max_drawdown_soft: -0.05    # reduce exposure
-  max_drawdown_hard: -0.15    # full cash
-  btc_daily_move_kill: 0.40
-  max_consecutive_errors: 5
-
 data:
   db_path: './prices.db'
-  warmup_source: 'binance'    # binance | roostoo_live_only
   log_dir: './logs/'
+
+backtest:
+  start_date: "2025-03-18"
+  end_date: "2026-03-18"
+  initial_balance: 50000
+  data_dir: "./data/binance"
 ```
 
 ### 10.4 Monitoring and Health Dashboard
@@ -786,7 +904,7 @@ MA_{20}(t) = \frac{1}{20}\sum_{i=0}^{19} P_{\text{BTC}}(t-i), \quad \text{regime
 
 **Inverse-Volatility Weight:**
 \[
-w_i = \frac{1/\sigma_i}{\sum_{j \in \text{top-N}} 1/\sigma_j} \cdot \min\left(w_i^{\text{raw}}, 0.20\right) \cdot 0.85
+w_i^{\text{raw}} = \frac{1/\sigma_i}{\sum_{j \in \text{top-N}} 1/\sigma_j}, \quad w_i^{\text{capped}} = \min\left(w_i^{\text{raw}}, 0.25\right), \quad w_i = \frac{w_i^{\text{capped}}}{\sum_j w_j^{\text{capped}}} \cdot \text{effective\_exposure}
 \]
 
 **Portfolio Drawdown:**
