@@ -82,6 +82,14 @@
       border-bottom: 1px solid var(--border);
     }
     .balance-list li:last-child, .ticker-list li:last-child { border-bottom: none; }
+    .positions-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; margin-top: 0.75rem; }
+    .positions-table th { color: var(--muted); font-weight: 600; text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .positions-table td { padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }
+    .positions-table tr:last-child td { border-bottom: none; }
+    .positions-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .positions-table .asset-name { font-weight: 600; }
+    .positions-table .pct-bar { display: inline-block; height: 4px; border-radius: 2px; background: var(--accent); vertical-align: middle; margin-right: 0.25rem; }
+    .pct-col { min-width: 5rem; }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -91,6 +99,20 @@
     th { color: var(--muted); font-weight: 600; }
     .num { text-align: right; }
     .orders-wrap { overflow-x: auto; }
+    .orders-wrap table { font-size: 0.8125rem; }
+    .orders-wrap th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .orders-wrap td { font-variant-numeric: tabular-nums; }
+    .side-buy { color: var(--success); font-weight: 600; }
+    .side-sell { color: var(--error); font-weight: 600; }
+    .status-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+    .status-filled { background: rgba(63, 185, 80, 0.15); color: var(--success); }
+    .status-pending { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+    .status-cancelled { background: rgba(248, 81, 73, 0.15); color: var(--error); }
+    .status-other { background: rgba(139, 148, 158, 0.15); color: var(--muted); }
+    .fill-bar-wrap { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .fill-bar { width: 2.5rem; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+    .fill-bar-inner { height: 100%; border-radius: 2px; background: var(--success); }
+    .time-rel { color: var(--muted); font-size: 0.75rem; }
     .empty { color: var(--muted); font-style: italic; }
     .err-msg { color: var(--error); font-size: 0.875rem; margin-top: 0.5rem; }
   </style>
@@ -104,13 +126,6 @@
   </div>
 
   <div class="grid">
-    <div class="card" id="card-balance">
-      <h2>Balance</h2>
-      <div id="portfolio-value" class="value">—</div>
-      <div id="balance" class="value" style="font-size: 0.875rem; color: var(--muted); margin-top: 0.25rem;">—</div>
-      <ul id="balance-list" class="balance-list" aria-label="Balance by asset"></ul>
-      <div id="balance-err" class="err-msg" hidden></div>
-    </div>
     <div class="card" id="card-pending">
       <h2>Pending Orders</h2>
       <div id="pending" class="value">—</div>
@@ -121,6 +136,34 @@
       <div id="server-time" class="value">—</div>
       <div id="time-err" class="err-msg" hidden></div>
     </div>
+  </div>
+
+  <div class="card" id="card-balance" style="margin-bottom: 1rem;">
+    <h2>Portfolio</h2>
+    <div style="display: flex; gap: 2rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+      <div>
+        <div style="color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;">Total Value</div>
+        <div id="portfolio-value" class="value">—</div>
+      </div>
+      <div>
+        <div style="color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;">Cash (USD)</div>
+        <div id="balance" class="value">—</div>
+      </div>
+    </div>
+    <table class="positions-table">
+      <thead>
+        <tr>
+          <th>Asset</th>
+          <th class="num">Quantity</th>
+          <th class="num">Price (USD)</th>
+          <th class="num">Value (USD)</th>
+          <th class="num">24h Chg</th>
+          <th class="num pct-col">Allocation</th>
+        </tr>
+      </thead>
+      <tbody id="positions-body"></tbody>
+    </table>
+    <div id="balance-err" class="err-msg" hidden></div>
   </div>
 
   <div class="card" style="margin-bottom: 1rem;">
@@ -138,10 +181,12 @@
             <th>Pair</th>
             <th>Side</th>
             <th>Type</th>
-            <th>Quantity</th>
-            <th>Price</th>
+            <th class="num">Qty (Req)</th>
+            <th class="num">Filled</th>
+            <th class="num">Avg Price</th>
+            <th class="num">Value (USD)</th>
             <th>Status</th>
-            <th class="num">Created</th>
+            <th class="num">Time</th>
           </tr>
         </thead>
         <tbody id="orders-body"></tbody>
@@ -221,11 +266,19 @@
       }
     }
 
-    function getPriceFromTicker(tickerData, pair) {
+    function getTickerRow(tickerData, pair) {
       const payload = tickerData.Data && typeof tickerData.Data === 'object' ? tickerData.Data : tickerData;
-      const row = payload[pair] ?? payload[pair?.replace('/', '')];
-      if (!row || typeof row !== 'object') return null;
-      return Number(row.LastPrice ?? row.lastPrice ?? row.Last) || null;
+      return payload[pair] ?? payload[pair?.replace('/', '')] ?? null;
+    }
+
+    function fmtUsd(n) {
+      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function fmtQty(n) {
+      if (n >= 1000) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (n >= 1) return n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+      return n.toLocaleString(undefined, { minimumFractionDigits: 6, maximumFractionDigits: 6 });
     }
 
     async function loadBalanceAndTicker() {
@@ -243,42 +296,76 @@
         if (typeof wallet !== 'object' || wallet === null) {
           document.getElementById('portfolio-value').textContent = '—';
           document.getElementById('balance').textContent = '—';
-          document.getElementById('balance-list').innerHTML = '';
+          document.getElementById('positions-body').innerHTML = '<tr><td colspan="6" class="empty">No data</td></tr>';
           return true;
         }
         const combined = spot && margin ? { ...spot, ...margin } : wallet;
         const entries = Object.entries(combined).filter(([, v]) => v && typeof v === 'object');
+
         let cashUsd = 0;
         let portfolioValue = 0;
+        const positions = [];
+
         entries.forEach(([asset, v]) => {
           const free = Number(v.Free ?? v.free ?? 0) || 0;
           const lock = Number(v.Lock ?? v.lock ?? 0) || 0;
           const total = free + lock;
+          if (total === 0) return;
+
           if (asset === 'USD' || asset === 'USDT') {
             cashUsd += total;
             portfolioValue += total;
+            positions.push({ asset, total, free, lock, price: 1, value: total, change: null, isCash: true });
           } else {
             const pair = asset + '/USD';
-            const price = getPriceFromTicker(tickerData, pair);
-            if (price > 0) portfolioValue += total * price;
+            const row = getTickerRow(tickerData, pair);
+            const price = row ? (Number(row.LastPrice ?? row.lastPrice ?? row.Last) || 0) : 0;
+            const change = row ? (Number(row.Change ?? row.change) || null) : null;
+            const value = price > 0 ? total * price : 0;
+            portfolioValue += value;
+            positions.push({ asset, total, free, lock, price, value, change, isCash: false });
           }
         });
-        document.getElementById('portfolio-value').textContent = 'Portfolio value: USD ' + (portfolioValue > 0 ? portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—');
-        document.getElementById('balance').textContent = 'Cash (USD): ' + (cashUsd > 0 ? cashUsd.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—');
-        const list = document.getElementById('balance-list');
-        list.innerHTML = entries.map(([asset, v]) => {
-          const free = Number(v.Free ?? v.free ?? 0) || 0;
-          const lock = Number(v.Lock ?? v.lock ?? 0) || 0;
-          const total = free + lock;
-          if (total === 0) return '';
-          return `<li><span>${asset}</span><span>${total.toFixed(6)}</span></li>`;
-        }).filter(Boolean).join('') || '<li class="empty">No balances</li>';
+
+        positions.sort((a, b) => b.value - a.value);
+
+        document.getElementById('portfolio-value').textContent = portfolioValue > 0 ? '$' + fmtUsd(portfolioValue) : '—';
+        document.getElementById('balance').textContent = cashUsd > 0 ? '$' + fmtUsd(cashUsd) : '—';
+
+        const tbody = document.getElementById('positions-body');
+        if (positions.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty">No positions</td></tr>';
+        } else {
+          tbody.innerHTML = positions.map(p => {
+            const pct = portfolioValue > 0 ? (p.value / portfolioValue * 100) : 0;
+            const barWidth = Math.min(pct, 100);
+            const priceStr = p.isCash ? '—' : (p.price > 0 ? '$' + fmtUsd(p.price) : '—');
+            const valueStr = p.value > 0 ? '$' + fmtUsd(p.value) : '—';
+            let changeStr = '—';
+            if (p.change != null && !isNaN(p.change)) {
+              const sign = p.change >= 0 ? '+' : '';
+              const color = p.change >= 0 ? 'var(--success)' : 'var(--error)';
+              changeStr = `<span style="color: ${color}">${sign}${p.change.toFixed(2)}%</span>`;
+            }
+            const pctStr = `<span class="pct-bar" style="width: ${barWidth}%"></span>${pct.toFixed(1)}%`;
+            const qtyTitle = p.lock > 0 ? `Free: ${fmtQty(p.free)}, Locked: ${fmtQty(p.lock)}` : '';
+            return `<tr>
+              <td class="asset-name">${p.asset}</td>
+              <td class="num" title="${qtyTitle}">${p.isCash ? fmtUsd(p.total) : fmtQty(p.total)}</td>
+              <td class="num">${priceStr}</td>
+              <td class="num">${valueStr}</td>
+              <td class="num">${changeStr}</td>
+              <td class="num pct-col">${pctStr}</td>
+            </tr>`;
+          }).join('');
+        }
+
         const dataPayload = tickerData.Data && typeof tickerData.Data === 'object' ? tickerData.Data : tickerData;
         const btcTicker = dataPayload['BTC/USD'] ?? dataPayload.BTCUSD ?? tickerData['BTC/USD'] ?? tickerData.BTCUSD ?? tickerData;
-        const price = btcTicker?.LastPrice ?? btcTicker?.lastPrice ?? btcTicker?.Last;
-        const change = btcTicker?.Change ?? btcTicker?.change;
-        let tickerHtml = price != null ? 'USD ' + Number(price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
-        if (change != null && !isNaN(change)) tickerHtml += ' <span style="color: var(--muted);">(' + (Number(change) >= 0 ? '+' : '') + Number(change).toFixed(2) + '%)</span>';
+        const btcPrice = btcTicker?.LastPrice ?? btcTicker?.lastPrice ?? btcTicker?.Last;
+        const btcChange = btcTicker?.Change ?? btcTicker?.change;
+        let tickerHtml = btcPrice != null ? 'USD ' + Number(btcPrice).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
+        if (btcChange != null && !isNaN(btcChange)) tickerHtml += ` <span style="color: var(--muted);">(${Number(btcChange) >= 0 ? '+' : ''}${Number(btcChange).toFixed(2)}%)</span>`;
         document.getElementById('ticker').innerHTML = tickerHtml;
         document.getElementById('ticker-err').hidden = true;
         return true;
@@ -286,7 +373,7 @@
         setCardError('balance', e);
         document.getElementById('portfolio-value').textContent = 'Error';
         document.getElementById('balance').textContent = '—';
-        document.getElementById('balance-list').innerHTML = '';
+        document.getElementById('positions-body').innerHTML = '';
         return false;
       } finally {
         setCardLoading('balance', false);
@@ -310,6 +397,26 @@
       }
     }
 
+    function timeAgo(ms) {
+      const sec = Math.floor((Date.now() - ms) / 1000);
+      if (sec < 60) return sec + 's ago';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return min + 'm ago';
+      const hr = Math.floor(min / 60);
+      if (hr < 24) return hr + 'h ago';
+      const d = Math.floor(hr / 24);
+      return d + 'd ago';
+    }
+
+    function statusBadge(status) {
+      const s = (status || '').toLowerCase();
+      let cls = 'status-other';
+      if (s === 'filled' || s === 'completed') cls = 'status-filled';
+      else if (s === 'pending' || s === 'new' || s === 'partially_filled') cls = 'status-pending';
+      else if (s === 'cancelled' || s === 'canceled' || s === 'rejected') cls = 'status-cancelled';
+      return `<span class="status-badge ${cls}">${status}</span>`;
+    }
+
     async function loadOrders() {
       document.getElementById('orders-err').hidden = true;
       try {
@@ -318,19 +425,43 @@
         const rows = Array.isArray(orders) ? orders : [];
         const tbody = document.getElementById('orders-body');
         if (rows.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" class="empty">No orders</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" class="empty">No orders</td></tr>';
           return true;
         }
         tbody.innerHTML = rows.map(o => {
           const pair = o.Pair ?? o.pair ?? '—';
           const side = o.Side ?? o.side ?? '—';
+          const sideClass = side.toLowerCase() === 'buy' ? 'side-buy' : side.toLowerCase() === 'sell' ? 'side-sell' : '';
           const type = o.Type ?? o.type ?? '—';
-          const qty = o.Quantity ?? o.quantity ?? o.FilledQuantity ?? o.filledQuantity ?? '—';
-          const price = o.Price ?? o.price ?? o.FilledAverPrice ?? o.filledAverPrice ?? '—';
+          const reqQty = Number(o.Quantity ?? o.quantity ?? 0);
+          const filledQty = Number(o.FilledQuantity ?? o.filledQuantity ?? 0);
+          const fillPct = reqQty > 0 ? Math.min(filledQty / reqQty * 100, 100) : 0;
+          const avgPrice = Number(o.FilledAverPrice ?? o.filledAverPrice ?? o.Price ?? o.price ?? 0);
+          const value = filledQty > 0 && avgPrice > 0 ? filledQty * avgPrice : 0;
           const status = o.Status ?? o.status ?? '—';
           const ts = o.CreateTimestamp ?? o.createTimestamp ?? o.CreateTime ?? o.createTime;
-          const time = ts != null ? new Date(ts).toLocaleString() : '—';
-          return `<tr><td>${pair}</td><td>${side}</td><td>${type}</td><td>${qty}</td><td>${price}</td><td>${status}</td><td class="num">${time}</td></tr>`;
+          const timeStr = ts != null ? new Date(ts).toLocaleString() : '—';
+          const relTime = ts != null ? timeAgo(ts) : '';
+
+          const reqQtyStr = reqQty > 0 ? fmtQty(reqQty) : '—';
+          const filledStr = filledQty > 0
+            ? `<span class="fill-bar-wrap">${fmtQty(filledQty)}<span class="fill-bar"><span class="fill-bar-inner" style="width:${fillPct}%"></span></span></span>`
+            : '—';
+          const avgPriceStr = avgPrice > 0 ? '$' + fmtUsd(avgPrice) : '—';
+          const valueStr = value > 0 ? '$' + fmtUsd(value) : '—';
+          const timeCell = relTime ? `<span title="${timeStr}">${relTime}</span>` : timeStr;
+
+          return `<tr>
+            <td>${pair}</td>
+            <td class="${sideClass}">${side}</td>
+            <td>${type}</td>
+            <td class="num">${reqQtyStr}</td>
+            <td class="num">${filledStr}</td>
+            <td class="num">${avgPriceStr}</td>
+            <td class="num">${valueStr}</td>
+            <td>${statusBadge(status)}</td>
+            <td class="num">${timeCell}</td>
+          </tr>`;
         }).join('');
         return true;
       } catch (e) {
