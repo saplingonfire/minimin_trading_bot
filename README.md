@@ -8,11 +8,11 @@ Modular crypto trading bot for the [Roostoo](https://github.com/roostoo/Roostoo-
 
 - **Roostoo SDK** — Python client for Roostoo Public API v3: server time, exchange info, ticker, balance, place/cancel/query orders (market and limit). HMAC signing, configurable base URL.
 - **Modular bot** — Strategy abstraction (`Strategy.next(context) -> signals`), execution layer (precision, risk guards, retries), market-data facade. Add strategies under `bot/strategies/` and register by name.
-- **Fee-aware trading** — Configurable trading fees (market: 10 bps, limit: 5 bps). Strategies adjust buy quantities to account for fees and use a dead-zone filter to prevent unprofitable churn from small rebalances. A percentage-based rebalance threshold (`min_rebalance_pct`, default 2%) scales with position size, and a per-pair trade cooldown (`pair_cooldown_min`, default 30 min) prevents buy-then-sell whipsaw across consecutive tick cycles. Backtest engine deducts fees from simulated fills.
+- **Fee-aware trading** — Configurable trading fees. Strategies adjust buy quantities to account for fees and use dead-zone filters to prevent unprofitable churn from small rebalances. Backtest engine deducts fees from simulated fills.
 - **Test vs live credentials** — Two credential sets (env: `ROOSTOO_TEST_*` and `ROOSTOO_API_KEY`/`ROOSTOO_SECRET_KEY`). Switch with `BOT_LIVE` or CLI `--live` / `--test`.
 - **Config** — Env vars (`.env`) plus optional `config.yaml` for strategy params, execution pacing, risk, and backtest settings. Strategy section is merged into `strategy_params` for the chosen strategy.
-- **Risk and kill switch** — Drawdown ladder (e.g. −5% / −10% / −15% from peak), BTC daily move kill (e.g. 40%), consecutive API error halt, optional cancel-on-stop for managed pairs.
-- **Strategies** — Example (test pipeline); hybrid trend + cross-sectional momentum (BTC MA20 regime, top-N inverse-vol); throttled variant (three-tier regime, soft exposure); cross-sectional momentum (weekly rebalance); momentum 20/50 (EMA crossover); Bollinger + RSI.
+- **Risk and kill switch** — Drawdown-based de-risking, market-move circuit breakers, consecutive API error halt, optional cancel-on-stop for managed pairs.
+- **Strategies** — Multiple pluggable strategies with configurable parameters. See `bot/strategies/` for implementations.
 - **Backtest** — Script runs configured strategy over Binance historical OHLCV; prints performance report (returns, drawdown, fees, etc.). Simulates trading fees on all fills.
 - **Historical data sync** — Script to download Binance spot klines to local CSV (Roostoo tradeable universe or custom tickers). Strategies that need OHLCV use `BINANCE_DATA_DIR` or a file-based provider.
 - **Dashboard** — Read-only web UI (FastAPI) to monitor balance, orders, ticker; uses same SDK. No trading from the dashboard (competition rules). Deployable to Vercel.
@@ -29,9 +29,9 @@ minimin_trading_bot/
 │   ├── runner.py         # Tick loop, strategy load, kill switch, order pacing
 │   ├── market.py         # build_context (ticker, balance, pending orders)
 │   ├── execution.py      # Signal → orders; precision, risk guards, retries
-│   ├── risk.py           # Drawdown ladder, kill_switch_check (errors, drift, BTC move)
-│   ├── price_store.py    # SQLite price history (regime / momentum)
-│   ├── regime.py         # BTC vs MA regime (risk_on / risk_off)
+│   ├── risk.py           # Drawdown management, kill switch
+│   ├── price_store.py    # SQLite price history
+│   ├── regime.py         # Market regime detection
 │   ├── strategies/       # Strategy implementations + registry
 │   └── backtest/         # Backtest engine and report
 ├── config/               # BotSettings, load_settings, optional config.yaml merge
@@ -117,7 +117,7 @@ Copy `.env.example` to `.env` and set:
 
 Optional. Used for strategy params, execution pacing, data paths, and backtest.
 
-- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes shared params (N, ma_window, target_exposure, min_trade_usd, min_price_usd, min_rebalance_pct, pair_cooldown_min, etc.), **risk** (max_consecutive_errors, btc_daily_move_kill, max_consecutive_db_errors — halt after this many consecutive SQLite failures in a tick, default 5), and for throttled strategy **regime** (prelim_mode, strong_exposure, soft_exposure, consecutive_below_to_off).
+- **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes strategy-specific tuning parameters, **risk** thresholds, and optional **regime** settings. See `config.yaml.example` for the full parameter list.
 - **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec, **fees** (market_bps, limit_bps — trading fee rates in basis points, automatically injected into strategy params).
 - **data** — db_path (price store), log_dir (optional directory for default trade/API JSONL logs when `BOT_TRADES_LOG` / `BOT_ROOSTOO_API_LOG` are unset).
 - **backtest** — start_date, end_date, initial_balance, data_dir.
@@ -150,7 +150,7 @@ python scripts/run_bot.py --strategy hybrid_trend_cross_sectional [--test] [--dr
 - `--env-file` — Path to `.env` (default `.env`).
 - `-v` — Verbose logging.
 
-**Price store warmup:** For hybrid strategies, `run_bot.py` automatically backfills `prices.db` with ~30 days of daily closes for all Roostoo-universe symbols from the Binance public klines API. This makes the bot operational from tick 1 (momentum ranking needs 8 daily closes, BTC regime needs 20). Symbols that already have enough history are skipped. Use `--skip-warmup` to disable. The SQLite store uses WAL mode, busy timeouts, retries on transient `OperationalError`, and the runner skips a tick (then may halt) on repeated DB failures — see `strategy.risk.max_consecutive_db_errors`. You can also run warmup standalone:
+**Price store warmup:** For strategies that use historical price data, `run_bot.py` automatically backfills `prices.db` with recent daily closes from the Binance public klines API. Symbols that already have enough history are skipped. Use `--skip-warmup` to disable. You can also run warmup standalone:
 
 ```bash
 python scripts/warmup_price_store.py [--db-path prices.db] [--days 30] [--tickers BTC,ETH,SOL]
@@ -158,23 +158,14 @@ python scripts/warmup_price_store.py [--db-path prices.db] [--days 30] [--ticker
 
 **Strategies:**
 
-| Name | Description |
-|------|-------------|
-| `example` | Places a MARKET buy every N ticks (for testing the pipeline). |
-| `hybrid_trend_cross_sectional` | BTC MA20 regime filter + cross-sectional momentum (top-N by MomScore, inverse-vol weights). Long-only; risk-off when BTC below MA20. |
-| `hybrid_trend_cross_sectional_throttled` | Same idea with three-tier regime: strong (full exposure), soft (e.g. 35% when BTC slightly below MA20), risk_off after 2 consecutive daily closes below MA20. Suited to preliminary round. |
-| `cross_sectional_momentum` | Weekly rebalance; top N by 90d return; 200 MA filter. Requires `BINANCE_DATA_DIR`. |
-| `momentum_20_50` | EMA 20/50 crossover, ATR trailing stop. Requires `BINANCE_DATA_DIR`. |
-| `bollinger_rsi` | Bollinger + RSI oversold, 4H regime filter. Requires `BINANCE_DATA_DIR`. |
-
-For the **SG vs HK Quant Hackathon**, use **hybrid_trend_cross_sectional** or **hybrid_trend_cross_sectional_throttled** so the bot runs with Roostoo data only (price store + ticker). Set `BOT_STRATEGY` and optionally `BOT_PRICE_STORE_PATH` (or config `data.db_path`). The bot needs ~20 days of BTC history for the regime filter; it can warm up from Binance if available or you can pre-fill the price DB.
+Multiple strategies are available under `bot/strategies/`. Set the strategy name via `BOT_STRATEGY` in `.env` or `--strategy` on the CLI. Some strategies run entirely on Roostoo ticker data (with a local price store), while others require historical OHLCV from Binance (`BINANCE_DATA_DIR`). See `config.yaml.example` for tunable parameters.
 
 **Hackathon (AWS EC2):**
 
 1. Follow the [Roostoo hackathon guide](https://roostoo.notion.site/Hackathon-Guide-How-to-Sign-In-AWS-and-Launch-Your-Bot-309ba22fed798071b4dde6d1e8666816): launch instance in ap-southeast-2, connect via Session Manager.
 2. Clone the repo, create and activate venv (`./scripts/setup_venv.sh` then `source venv/bin/activate`).
 3. Copy `.env.example` to `.env`, set test/live credentials and `BOT_STRATEGY`.
-4. Run under **tmux** so the bot keeps running after disconnect: `tmux`, then `python scripts/run_bot.py --strategy hybrid_trend_cross_sectional_throttled`. Detach: `Ctrl+B` then `D`. Reattach: `tmux attach`.
+4. Run under **tmux** so the bot keeps running after disconnect: `tmux`, then `python scripts/run_bot.py --strategy <your_strategy>`. Detach: `Ctrl+B` then `D`. Reattach: `tmux attach`.
 
 ---
 
@@ -233,10 +224,10 @@ Read-only web UI to monitor your Roostoo account (balance, pending orders, serve
 
 ## Risk and kill switch
 
-- **Drawdown ladder** (`bot/risk.py`): From portfolio peak, −5% → 70% target exposure, −10% → 50%, −15% → force risk-off (0% target). Recovery when portfolio ≥ 95% of peak.
-- **Kill switch** (`kill_switch_check`): (1) Consecutive API errors ≥ 5 → halt bot and force risk-off. (2) Clock drift > 60s → halt and force risk-off. (3) |BTC 24h change| > 40% (configurable) → force risk-off only (go to cash, bot keeps running).
-- **Regime (hybrid strategies):** BTC below MA20 (and for throttled, 2 consecutive daily closes below MA20) → risk-off; target weights set to empty so no new longs (existing positions are not auto-sold by the current logic).
-- Config: `strategy.risk.max_consecutive_errors`, `strategy.risk.btc_daily_move_kill` in `config.yaml`.
+- **Drawdown-based de-risking** (`bot/risk.py`): Exposure is automatically reduced as the portfolio draws down from its peak, with configurable thresholds.
+- **Kill switch** (`kill_switch_check`): Halts or de-risks the bot on consecutive API errors, clock drift, or extreme market moves.
+- **Regime filter**: Strategies that use a market regime gate will go to cash when conditions indicate risk-off.
+- Config: see `strategy.risk` in `config.yaml`.
 
 ---
 
