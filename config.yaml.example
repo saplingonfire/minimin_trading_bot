@@ -17,6 +17,8 @@ strategy:
   min_trade_usd: 50.0
   # Minimum 24h USD volume for a pair to be eligible for ranking.
   min_volume_usd: 500000
+  # Minimum coin price (USD) to be eligible; filters out micro-priced tokens.
+  min_price_usd: 0.01
   # Minutes between cross-sectional re-ranks (throttles order flow).
   rank_interval_min: 60
   # UTC hour (0–23) at which regime (BTC vs MA) is re-evaluated once per day.
@@ -51,6 +53,12 @@ risk:
   btc_daily_move_kill: 0.40
   # Halt bot after this many consecutive API errors.
   max_consecutive_errors: 5
+
+# Dashboard (initial balance for PnL chart on the portfolio value time-series).
+dashboard:
+  # Starting USD balance for test and live accounts (used to compute PnL %).
+  initial_balance_test: 50000
+  initial_balance_live: 1000000
 
 # Data and persistence.
 data:

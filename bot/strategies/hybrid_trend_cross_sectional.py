@@ -60,6 +60,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._max_weight_per_coin = float(config.get("max_weight_per_coin", 0.20))
         self._min_trade_usd = float(config.get("min_trade_usd", 50.0))
         self._min_volume_usd = float(config.get("min_volume_usd", 500_000))
+        self._min_price_usd = float(config.get("min_price_usd", 0.0))
         self._min_days_history = int(config.get("min_days_history", 3))
         self._rank_interval_min = int(config.get("rank_interval_min", 60))
         self._regime_utc_hour = int(config.get("regime_utc_hour", 0))
@@ -120,6 +121,10 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             vol_usd = get_volume_usd(context.ticker, pair)
             if vol_usd < self._min_volume_usd:
                 continue
+            if self._min_price_usd > 0:
+                price = get_price(context.ticker, pair)
+                if price < self._min_price_usd:
+                    continue
             ch = get_change_pct(context.ticker, pair)
             if abs(ch) > 0.50:
                 continue
