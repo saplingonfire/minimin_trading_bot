@@ -34,25 +34,37 @@ def _get_pair_info(exchange_info: dict[str, Any] | None, pair: str) -> dict[str,
 def _round_quantity(qty: float, pair_info: dict[str, Any] | None) -> float:
     if not pair_info:
         return qty
-    prec = pair_info.get("AmountPrecision") or pair_info.get("amount_precision")
+    prec = pair_info.get("AmountPrecision")
+    if prec is None:
+        prec = pair_info.get("amount_precision")
     if prec is None:
         return qty
-    return round(qty, int(prec))
+    p = int(prec)
+    if p == 0:
+        return float(int(qty))
+    return round(qty, p)
 
 
 def _round_price(price: float, pair_info: dict[str, Any] | None) -> float:
     if not pair_info:
         return price
-    prec = pair_info.get("PricePrecision") or pair_info.get("price_precision")
+    prec = pair_info.get("PricePrecision")
+    if prec is None:
+        prec = pair_info.get("price_precision")
     if prec is None:
         return price
-    return round(price, int(prec))
+    p = int(prec)
+    if p == 0:
+        return float(int(price))
+    return round(price, p)
 
 
 def _check_mini_order(qty: float, pair_info: dict[str, Any] | None) -> bool:
     if not pair_info:
         return True
-    mini = pair_info.get("MiniOrder") or pair_info.get("mini_order")
+    mini = pair_info.get("MiniOrder")
+    if mini is None:
+        mini = pair_info.get("mini_order")
     if mini is None:
         return True
     return qty >= float(mini)
@@ -234,6 +246,7 @@ class Executor:
         out = self._request_with_retry(_do, "place_order")
         success = "error" not in out
         err = out.get("error", "") if not success else ""
+        err_msg = out.get("message", "") if not success else ""
         order_id = out.get("OrderID") or out.get("order_id") if success else None
         self._append_trade({
             "action": "place", "pair": pair, "side": sig.side, "qty": qty,
@@ -242,8 +255,10 @@ class Executor:
         })
         logger.info(
             "order_result pair=%s side=%s qty=%s success=%s%s",
-            pair, sig.side, qty, success, f" error={err}" if err else "",
+            pair, sig.side, qty, success,
+            f" error={err} message={err_msg}" if err else "",
         )
+
         return out
 
     def _request_with_retry(

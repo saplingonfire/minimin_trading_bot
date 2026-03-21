@@ -178,6 +178,15 @@ class RoostooClient:
         """GET /v3/pending_count — total pending order count (signed)."""
         return self._request("GET", "/v3/pending_count", params={}, signed=True)
 
+    @staticmethod
+    def _fmt_number(v: str | float) -> str:
+        """Format a numeric value as a clean string: strip trailing zeros and unnecessary decimal point."""
+        if isinstance(v, str):
+            return v
+        if v == int(v):
+            return str(int(v))
+        return f"{v:.10f}".rstrip("0").rstrip(".")
+
     def place_order(
         self,
         pair: str,
@@ -194,10 +203,10 @@ class RoostooClient:
             "pair": pair_str,
             "side": side.upper(),
             "type": order_type.upper(),
-            "quantity": str(quantity),
+            "quantity": self._fmt_number(quantity),
         }
         if order_type == "LIMIT" and price is not None:
-            payload["price"] = str(price)
+            payload["price"] = self._fmt_number(price)
         return self._request("POST", "/v3/place_order", params=payload, signed=True)
 
     def query_order(
