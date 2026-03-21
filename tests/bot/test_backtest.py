@@ -52,6 +52,30 @@ def test_backtest_engine_returns_equity_and_trades(tmp_path: Path) -> None:
     assert result.equity_curve[0][1] == 10_000.0
 
 
+def test_backtest_exclude_pairs_empty_universe_raises(tmp_path: Path) -> None:
+    """If exclude_pairs removes every discovered pair, run_backtest should raise."""
+    base = tmp_path / "data" / "spot" / "daily" / "klines" / "BTCUSDT" / "1h"
+    base.mkdir(parents=True)
+    day_ms = 24 * 3600 * 1000
+    start_ms = 1704067200000
+    for i in range(10):
+        _write_1h_csv(base / f"BTCUSDT-1h-2024-01-{i+1:02d}.csv", start_ms + i * day_ms, 40000.0 + i * 100)
+
+    with pytest.raises(ValueError, match="after exclude_pairs"):
+        run_backtest(
+            str(tmp_path),
+            "hybrid_trend_cross_sectional",
+            {
+                "ma_window": 5,
+                "N": 2,
+                "min_days_history": 2,
+                "min_volume_usd": 0,
+                "exclude_pairs": ["BTC/USD"],
+            },
+            initial_balance_usd=10_000.0,
+        )
+
+
 def test_report_metrics_are_numeric() -> None:
     # One point -> no returns; two points with same value -> 0 return
     equity_curve = [(1704067200000, 10_000.0), (1704153600000, 10_100.0)]

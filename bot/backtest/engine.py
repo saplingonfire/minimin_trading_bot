@@ -13,7 +13,7 @@ from typing import Any
 from bot.base import PlaceOrderSignal, TradingContext
 from bot.ohlcv import BinanceHistoricalFileProvider, OHLCVCandle, discover_tradeable_pairs
 from bot.price_store import PriceStore
-from bot.strategies.utils import get_balance_free, get_price, parse_pair
+from bot.strategies.utils import get_balance_free, get_price, parse_pair, tradeable_pairs
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,16 @@ def run_backtest(
     pairs = discover_tradeable_pairs(data_dir)
     if not pairs:
         raise ValueError(f"no tradeable pairs found under {data_dir}")
+
+    exclude = strategy_params.get("exclude_pairs")
+    if exclude:
+        synthetic = {"TradePairs": {p: {"CanTrade": True} for p in pairs}}
+        pairs = tradeable_pairs(synthetic, exclude=exclude)
+        if not pairs:
+            raise ValueError(
+                "after exclude_pairs filter, no pairs remain; check config strategy.exclude_pairs or BOT_EXCLUDE_PAIRS"
+            )
+        logger.info("backtest pairs after exclude_pairs: count=%s", len(pairs))
 
     exchange_info: dict[str, Any] = {"TradePairs": {p: {"CanTrade": True}} for p in pairs}
 

@@ -61,6 +61,10 @@ def main() -> int:
         help="Initial equity in USD (default from config backtest or 10000)",
     )
     parser.add_argument("--env-file", default=os.path.join(_repo_root, ".env"), help="Path to .env file (default: repo root .env)")
+    parser.add_argument(
+        "--exclude-pairs",
+        help="Comma-separated pairs to exclude from backtest universe (overrides config and BOT_EXCLUDE_PAIRS)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -84,6 +88,12 @@ def main() -> int:
     )
     strategy_params = dict(strategy_section)
     strategy_params.pop("_name", None)
+    # Same as bot load_settings: env BOT_EXCLUDE_PAIRS overrides config exclude_pairs
+    exclude_env = (os.environ.get("BOT_EXCLUDE_PAIRS") or "").strip()
+    if exclude_env:
+        strategy_params["exclude_pairs"] = [p.strip() for p in exclude_env.split(",") if p.strip()]
+    if args.exclude_pairs and args.exclude_pairs.strip():
+        strategy_params["exclude_pairs"] = [p.strip() for p in args.exclude_pairs.split(",") if p.strip()]
 
     data_dir = (args.data_dir or backtest_section.get("data_dir") or "").strip()
     if not data_dir:

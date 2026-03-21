@@ -196,6 +196,8 @@ python scripts/run_backtest.py --config config.yaml --data-dir data/binance [--s
 - `--data-dir` — Binance OHLCV directory (default `BINANCE_DATA_DIR`).
 - `--start-date`, `--end-date` — Optional; otherwise uses config backtest section or full data range.
 - `--initial-balance` — Optional; otherwise from config or 10000.
+- `--exclude-pairs` — Comma-separated pairs to exclude (overrides `strategy.exclude_pairs` and `BOT_EXCLUDE_PAIRS`).
+- Ticker exclusion also uses **`strategy.exclude_pairs`** in config and **`BOT_EXCLUDE_PAIRS`** in `.env` (same as live bot).
 - Set `BOT_STRATEGY` in env (or in .env) to choose the strategy to backtest.
 
 ---
