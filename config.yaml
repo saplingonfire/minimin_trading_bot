@@ -44,6 +44,10 @@ strategy:
     strong_exposure: 0.80
     soft_exposure: 0.35
     consecutive_below_to_off: 2
+    regime_eval_hours: 6          # Re-evaluate BTC regime every N hours (24 = once/day)
+    breakout_threshold_pct: 0.02  # BTC must exceed MA20 by this % to trigger fast-entry
+    breakout_exposure: 0.35       # Exposure level on breakout (soft entry)
+    breakout_cooldown_min: 60     # Min minutes between breakout triggers
 
 # -----------------------------------------------------------------------------
 # Runner / execution (tick interval, order pacing — stay under Roostoo rate limits)
