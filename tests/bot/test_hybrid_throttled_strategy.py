@@ -12,7 +12,7 @@ def _cleanup_db(path: Path) -> None:
 
 
 from bot.base import TradingContext
-from bot.price_store import MS_PER_DAY, PriceStore
+from bot.price_store import MS_PER_DAY, MS_PER_HOUR, PriceStore
 from bot.strategies.hybrid_trend_cross_sectional_throttled import (
     REGIME_RISK_OFF,
     REGIME_RISK_ON_SOFT,
@@ -229,5 +229,212 @@ def test_throttled_smoke_next() -> None:
         assert isinstance(signals, list)
         for s in signals:
             assert hasattr(s, "pair") and hasattr(s, "side")
+    finally:
+        _cleanup_db(db_path)
+
+
+# ---------------------------------------------------------------------------
+# Sub-daily regime eval
+# ---------------------------------------------------------------------------
+
+
+def test_sub_daily_regime_eval_triggers_at_interval() -> None:
+    """With regime_eval_hours=6, regime should re-evaluate every 6h, not daily."""
+    db_path = Path(tempfile.gettempdir()) / f"subdaily_{uuid.uuid4().hex}.db"
+    store = PriceStore(db_path)
+    try:
+        for i in range(22):
+            store.insert_daily_rows([("BTC/USD", (1000 + i) * MS_PER_DAY, 40000.0)])
+        config = {"N": 5, "regime": {"regime_eval_hours": 6, "consecutive_below_to_off": 2}}
+        strat = HybridTrendCrossSectionalThrottledStrategy(config)
+        strat.on_start()
+
+        base_ms = (1000 + 21) * MS_PER_DAY
+        ctx1 = TradingContext(
+            server_time_ms=base_ms,
+            ticker={"BTC/USD": {"LastPrice": 40000}},
+            balance={"USD": {"Free": 10000, "Lock": 0}},
+            pending_orders=[],
+            exchange_info={"TradePairs": {"BTC/USD": {"CanTrade": True}}},
+            price_store=store,
+        )
+        assert strat._is_regime_eval_time(base_ms) is True
+        strat._compute_regime(ctx1)
+        assert strat._is_regime_eval_time(base_ms) is False
+
+        three_hours_later = base_ms + 3 * MS_PER_HOUR
+        assert strat._is_regime_eval_time(three_hours_later) is False
+
+        six_hours_later = base_ms + 6 * MS_PER_HOUR
+        assert strat._is_regime_eval_time(six_hours_later) is True
+    finally:
+        _cleanup_db(db_path)
+
+
+# ---------------------------------------------------------------------------
+# Intraday MA (hourly closes in regime eval)
+# ---------------------------------------------------------------------------
+
+
+def test_regime_uses_hourly_closes_when_sub_daily() -> None:
+    """When regime_eval_hours < 24, _update_btc_regime uses hourly closes."""
+    db_path = Path(tempfile.gettempdir()) / f"hourly_ma_{uuid.uuid4().hex}.db"
+    store = PriceStore(db_path)
+    try:
+        base_ms = 1000 * MS_PER_DAY
+        for h in range(500):
+            store.append_ticker_snapshot(
+                {"BTC/USD": {"LastPrice": 40000.0}}, base_ms + h * MS_PER_HOUR,
+            )
+        store.append_ticker_snapshot(
+            {"BTC/USD": {"LastPrice": 50000.0}}, base_ms + 500 * MS_PER_HOUR,
+        )
+        config = {"N": 5, "regime": {"regime_eval_hours": 6, "ma_window": 20, "consecutive_below_to_off": 2}}
+        strat = HybridTrendCrossSectionalThrottledStrategy(config)
+        strat.on_start()
+        ctx = TradingContext(
+            server_time_ms=base_ms + 500 * MS_PER_HOUR,
+            ticker={"BTC/USD": {"LastPrice": 50000}},
+            balance={"USD": {"Free": 10000, "Lock": 0}},
+            pending_orders=[],
+            exchange_info={"TradePairs": {"BTC/USD": {"CanTrade": True}}},
+            price_store=store,
+        )
+        strat._update_btc_regime(ctx)
+        assert strat._regime == REGIME_RISK_ON_STRONG
+    finally:
+        _cleanup_db(db_path)
+
+
+# ---------------------------------------------------------------------------
+# Breakout fast-entry
+# ---------------------------------------------------------------------------
+
+
+def test_breakout_fires_when_btc_exceeds_ma20_threshold() -> None:
+    """BTC live price > MA20 * 1.02 while risk_off -> risk_on_soft."""
+    db_path = Path(tempfile.gettempdir()) / f"breakout_{uuid.uuid4().hex}.db"
+    store = PriceStore(db_path)
+    try:
+        for i in range(22):
+            store.insert_daily_rows([("BTC/USD", (1000 + i) * MS_PER_DAY, 40000.0)])
+        config = {
+            "N": 5,
+            "regime": {
+                "breakout_threshold_pct": 0.02,
+                "breakout_exposure": 0.35,
+                "breakout_cooldown_min": 60,
+                "consecutive_below_to_off": 2,
+            },
+        }
+        strat = HybridTrendCrossSectionalThrottledStrategy(config)
+        strat.on_start()
+        strat._regime = REGIME_RISK_OFF
+
+        ctx = TradingContext(
+            server_time_ms=(1000 + 22) * MS_PER_DAY,
+            ticker={"BTC/USD": {"LastPrice": 41000}},
+            balance={"USD": {"Free": 10000, "Lock": 0}},
+            pending_orders=[],
+            exchange_info={"TradePairs": {"BTC/USD": {"CanTrade": True}}},
+            price_store=store,
+        )
+        triggered = strat._check_breakout(ctx)
+        assert triggered is True
+        assert strat._regime == REGIME_RISK_ON_SOFT
+        assert strat._effective_exposure == 0.35
+    finally:
+        _cleanup_db(db_path)
+
+
+def test_breakout_does_not_fire_within_threshold() -> None:
+    """BTC live price < MA20 * 1.02 -> no breakout."""
+    db_path = Path(tempfile.gettempdir()) / f"no_breakout_{uuid.uuid4().hex}.db"
+    store = PriceStore(db_path)
+    try:
+        for i in range(22):
+            store.insert_daily_rows([("BTC/USD", (1000 + i) * MS_PER_DAY, 40000.0)])
+        config = {
+            "N": 5,
+            "regime": {
+                "breakout_threshold_pct": 0.02,
+                "breakout_exposure": 0.35,
+                "breakout_cooldown_min": 60,
+                "consecutive_below_to_off": 2,
+            },
+        }
+        strat = HybridTrendCrossSectionalThrottledStrategy(config)
+        strat.on_start()
+        strat._regime = REGIME_RISK_OFF
+
+        ctx = TradingContext(
+            server_time_ms=(1000 + 22) * MS_PER_DAY,
+            ticker={"BTC/USD": {"LastPrice": 40500}},
+            balance={"USD": {"Free": 10000, "Lock": 0}},
+            pending_orders=[],
+            exchange_info={"TradePairs": {"BTC/USD": {"CanTrade": True}}},
+            price_store=store,
+        )
+        triggered = strat._check_breakout(ctx)
+        assert triggered is False
+        assert strat._regime == REGIME_RISK_OFF
+    finally:
+        _cleanup_db(db_path)
+
+
+def test_breakout_cooldown_prevents_repeated_triggers() -> None:
+    """After a breakout fires, another within cooldown window is blocked."""
+    db_path = Path(tempfile.gettempdir()) / f"breakout_cd_{uuid.uuid4().hex}.db"
+    store = PriceStore(db_path)
+    try:
+        for i in range(22):
+            store.insert_daily_rows([("BTC/USD", (1000 + i) * MS_PER_DAY, 40000.0)])
+        config = {
+            "N": 5,
+            "regime": {
+                "breakout_threshold_pct": 0.02,
+                "breakout_exposure": 0.35,
+                "breakout_cooldown_min": 60,
+                "consecutive_below_to_off": 2,
+            },
+        }
+        strat = HybridTrendCrossSectionalThrottledStrategy(config)
+        strat.on_start()
+        strat._regime = REGIME_RISK_OFF
+
+        base_ms = (1000 + 22) * MS_PER_DAY
+        ctx1 = TradingContext(
+            server_time_ms=base_ms,
+            ticker={"BTC/USD": {"LastPrice": 41000}},
+            balance={"USD": {"Free": 10000, "Lock": 0}},
+            pending_orders=[],
+            exchange_info={"TradePairs": {"BTC/USD": {"CanTrade": True}}},
+            price_store=store,
+        )
+        assert strat._check_breakout(ctx1) is True
+
+        strat._regime = REGIME_RISK_OFF
+        ctx2 = TradingContext(
+            server_time_ms=base_ms + 30 * 60 * 1000,
+            ticker={"BTC/USD": {"LastPrice": 41500}},
+            balance={"USD": {"Free": 10000, "Lock": 0}},
+            pending_orders=[],
+            exchange_info={"TradePairs": {"BTC/USD": {"CanTrade": True}}},
+            price_store=store,
+        )
+        assert strat._check_breakout(ctx2) is False
+        assert strat._regime == REGIME_RISK_OFF
+
+        strat._regime = REGIME_RISK_OFF
+        ctx3 = TradingContext(
+            server_time_ms=base_ms + 61 * 60 * 1000,
+            ticker={"BTC/USD": {"LastPrice": 41500}},
+            balance={"USD": {"Free": 10000, "Lock": 0}},
+            pending_orders=[],
+            exchange_info={"TradePairs": {"BTC/USD": {"CanTrade": True}}},
+            price_store=store,
+        )
+        assert strat._check_breakout(ctx3) is True
+        assert strat._regime == REGIME_RISK_ON_SOFT
     finally:
         _cleanup_db(db_path)

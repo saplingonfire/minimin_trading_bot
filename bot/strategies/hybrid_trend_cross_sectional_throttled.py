@@ -27,6 +27,10 @@ def _default_regime_config(config: dict[str, Any]) -> dict[str, Any]:
         "strong_exposure": float(r.get("strong_exposure", 0.85)),
         "soft_exposure": float(r.get("soft_exposure", 0.35)),
         "consecutive_below_to_off": int(r.get("consecutive_below_to_off", 2)),
+        "regime_eval_hours": int(r.get("regime_eval_hours", 6)),
+        "breakout_threshold_pct": float(r.get("breakout_threshold_pct", 0.02)),
+        "breakout_exposure": float(r.get("breakout_exposure", 0.35)),
+        "breakout_cooldown_min": int(r.get("breakout_cooldown_min", 60)),
     }
 
 
@@ -39,24 +43,37 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
     """
 
     def __init__(self, config: dict[str, Any]) -> None:
-        super().__init__(config)
         self._regime_config = _default_regime_config(config)
+        regime_hours = self._regime_config["regime_eval_hours"]
+        config_with_eval = {**config, "regime_eval_hours": regime_hours}
+        super().__init__(config_with_eval)
         self._regime: str = REGIME_RISK_OFF
         self._consecutive_btc_below_ma: int = 0
+        self._last_breakout_ms: int | None = None
 
     def on_start(self) -> None:
         super().on_start()
         self._regime = REGIME_RISK_OFF
         self._consecutive_btc_below_ma = 0
+        self._last_breakout_ms = None
         self._effective_exposure = self._get_target_exposure()
 
     def _update_btc_regime(self, context: TradingContext) -> None:
-        """Update regime and consecutive_below_ma from BTC daily close vs MA20. Call once per day."""
+        """Update regime from BTC close vs MA. Uses hourly closes when eval < 24h, else daily."""
         if not context.price_store:
             return
         ma_window = self._regime_config["ma_window"]
         consecutive_to_off = self._regime_config["consecutive_below_to_off"]
-        btc_closes = context.price_store.get_daily_closes(BTC_PAIR, ma_window + 2)
+        eval_hours = self._regime_config["regime_eval_hours"]
+
+        if eval_hours < 24:
+            needed_hours = ma_window * 24
+            btc_closes = context.price_store.get_hourly_closes(BTC_PAIR, needed_hours)
+            if len(btc_closes) < ma_window:
+                btc_closes = context.price_store.get_daily_closes(BTC_PAIR, ma_window + 2)
+        else:
+            btc_closes = context.price_store.get_daily_closes(BTC_PAIR, ma_window + 2)
+
         if len(btc_closes) < ma_window:
             return
         ma_vals = sma(btc_closes, ma_window)
@@ -73,7 +90,7 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
                 self._regime = REGIME_RISK_OFF
             else:
                 self._regime = REGIME_RISK_ON_SOFT
-        self._last_regime_eval_day = context.server_time_ms // MS_PER_DAY
+        self._last_regime_eval_bucket = context.server_time_ms // self._regime_eval_ms
         logger.info(
             "regime=%s consecutive_btc_below_ma=%s",
             self._regime,
@@ -95,6 +112,44 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
 
     def _compute_regime(self, context: TradingContext) -> None:
         self._update_btc_regime(context)
+
+    def _check_breakout(self, context: TradingContext) -> bool:
+        """If risk_off and live BTC price exceeds daily MA20 by threshold, enter risk_on_soft.
+
+        Returns True if breakout was triggered (caller should force a re-rank).
+        """
+        if self._regime != REGIME_RISK_OFF:
+            return False
+        threshold = self._regime_config["breakout_threshold_pct"]
+        if threshold <= 0:
+            return False
+        cooldown_ms = self._regime_config["breakout_cooldown_min"] * 60 * 1000
+        now = context.server_time_ms
+        if self._last_breakout_ms is not None and (now - self._last_breakout_ms) < cooldown_ms:
+            return False
+        if not context.price_store:
+            return False
+        ma_window = self._regime_config["ma_window"]
+        btc_closes = context.price_store.get_daily_closes(BTC_PAIR, ma_window + 2)
+        if len(btc_closes) < ma_window:
+            return False
+        ma_vals = sma(btc_closes, ma_window)
+        if not ma_vals:
+            return False
+        last_ma = ma_vals[-1]
+        btc_price = get_price(context.ticker, BTC_PAIR)
+        if btc_price <= 0:
+            return False
+        if btc_price > last_ma * (1 + threshold):
+            self._regime = REGIME_RISK_ON_SOFT
+            self._effective_exposure = self._regime_config["breakout_exposure"]
+            self._last_breakout_ms = now
+            logger.info(
+                "breakout: BTC %.2f > MA20 %.2f * %.3f, regime -> risk_on_soft (exposure=%.2f)",
+                btc_price, last_ma, 1 + threshold, self._effective_exposure,
+            )
+            return True
+        return False
 
     def _compute_target_weights(self, context: TradingContext) -> dict[str, float]:
         if self._regime == REGIME_RISK_OFF:
@@ -130,10 +185,12 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
                 self._target_weights = {}
 
         now = context.server_time_ms
-        if self._is_daily_regime_time(now):
+        if self._is_regime_eval_time(now):
             self._compute_regime(context)
 
-        _needs_rerank = self._should_rerank(now)
+        breakout_triggered = self._check_breakout(context)
+
+        _needs_rerank = self._should_rerank(now) or breakout_triggered
         if not _needs_rerank and self._effective_exposure > 0 and self._target_weights and all(w == 0.0 for w in self._target_weights.values()):
             _needs_rerank = True
         if _needs_rerank:
