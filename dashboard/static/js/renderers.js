@@ -171,15 +171,17 @@ function computeOrderPnL(orders) {
     const price = Number(o.FilledAverPrice ?? o.filledAverPrice ?? 0);
     if (!base || qty <= 0 || price <= 0) continue;
 
+    const commission = Number(o.Commission ?? o.commission ?? 0);
+
     if (side === 'BUY') {
       const b = basis[base] ?? { cost: 0, qty: 0 };
-      b.cost += qty * price;
+      b.cost += qty * price + commission;
       b.qty += qty;
       basis[base] = b;
     } else if (side === 'SELL') {
       const b = basis[base] ?? { cost: 0, qty: 0 };
       const avgCost = b.qty > 0 ? b.cost / b.qty : 0;
-      const pnl = qty * (price - avgCost);
+      const pnl = qty * (price - avgCost) - commission;
       pnlMap.set(i, pnl);
       if (b.qty > 0) {
         const costAlloc = avgCost * qty;
