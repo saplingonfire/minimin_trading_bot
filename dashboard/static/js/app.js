@@ -38,7 +38,7 @@ async function refresh() {
   ]);
 
   const t = renderServerTime(timeResult);
-  const b = renderPortfolio(balanceResult, tickerResult);
+  const b = renderPortfolio(balanceResult, tickerResult, ordersResult);
   const p = renderPendingCount(pendingResult);
   renderOrders(ordersResult);
   renderChart(balanceResult, tickerResult, ordersResult, configResult);

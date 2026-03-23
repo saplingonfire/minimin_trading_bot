@@ -20,7 +20,7 @@ export function renderServerTime(result) {
   return true;
 }
 
-export function renderPortfolio(balanceResult, tickerResult) {
+export function renderPortfolio(balanceResult, tickerResult, ordersResult) {
   setCardLoading('balance', false);
   if (balanceResult.status === 'rejected' || tickerResult.status === 'rejected') {
     const err = balanceResult.reason || tickerResult.reason;
@@ -34,6 +34,12 @@ export function renderPortfolio(balanceResult, tickerResult) {
   const balanceData = balanceResult.value;
   const tickerData = tickerResult.value;
 
+  let costBasis = null;
+  if (ordersResult && ordersResult.status === 'fulfilled') {
+    const orders = extractOrders(ordersResult.value);
+    costBasis = computeOrderPnL(orders).basis;
+  }
+
   const spot = balanceData.SpotWallet && typeof balanceData.SpotWallet === 'object' ? balanceData.SpotWallet : null;
   const margin = balanceData.MarginWallet && typeof balanceData.MarginWallet === 'object' ? balanceData.MarginWallet : null;
   const legacy = balanceData.Wallet ?? balanceData.wallet ?? balanceData.CurrBal;
@@ -41,7 +47,7 @@ export function renderPortfolio(balanceResult, tickerResult) {
   if (typeof wallet !== 'object' || wallet === null) {
     document.getElementById('portfolio-value').textContent = '—';
     document.getElementById('balance').textContent = '—';
-    document.getElementById('positions-body').innerHTML = '<tr><td colspan="6" class="empty">No data</td></tr>';
+    document.getElementById('positions-body').innerHTML = '<tr><td colspan="7" class="empty">No data</td></tr>';
     return true;
   }
   const combined = spot && margin ? { ...spot, ...margin } : wallet;
@@ -60,7 +66,7 @@ export function renderPortfolio(balanceResult, tickerResult) {
     if (asset === 'USD' || asset === 'USDT') {
       cashUsd += total;
       portfolioValue += total;
-      positions.push({ asset, total, free, lock, price: 1, value: total, change: null, isCash: true });
+      positions.push({ asset, total, free, lock, price: 1, value: total, change: null, isCash: true, unrealizedPnl: null });
     } else {
       const pair = asset + '/USD';
       const row = getTickerRow(tickerData, pair);
@@ -68,7 +74,11 @@ export function renderPortfolio(balanceResult, tickerResult) {
       const change = row ? (Number(row.Change ?? row.change) || null) : null;
       const value = price > 0 ? total * price : 0;
       portfolioValue += value;
-      positions.push({ asset, total, free, lock, price, value, change, isCash: false });
+      let unrealizedPnl = null;
+      if (costBasis && costBasis[asset] && costBasis[asset].qty > 0 && value > 0) {
+        unrealizedPnl = value - costBasis[asset].cost;
+      }
+      positions.push({ asset, total, free, lock, price, value, change, isCash: false, unrealizedPnl });
     }
   }
 
@@ -79,7 +89,7 @@ export function renderPortfolio(balanceResult, tickerResult) {
 
   const tbody = document.getElementById('positions-body');
   if (positions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">No positions</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No positions</td></tr>';
   } else {
     tbody.innerHTML = positions.map(p => {
       const pct = portfolioValue > 0 ? (p.value / portfolioValue * 100) : 0;
@@ -92,6 +102,12 @@ export function renderPortfolio(balanceResult, tickerResult) {
         const color = p.change >= 0 ? 'var(--success)' : 'var(--error)';
         changeStr = `<span style="color: ${color}">${sign}${p.change.toFixed(2)}%</span>`;
       }
+      let pnlStr = '—';
+      if (p.unrealizedPnl != null) {
+        const sign = p.unrealizedPnl >= 0 ? '+' : '';
+        const color = p.unrealizedPnl >= 0 ? 'var(--success)' : 'var(--error)';
+        pnlStr = `<span style="color: ${color}">${sign}$${fmtUsd(Math.abs(p.unrealizedPnl))}</span>`;
+      }
       const pctStr = `<span class="pct-bar" style="width: ${barWidth}%"></span>${pct.toFixed(1)}%`;
       const qtyTitle = p.lock > 0 ? `Free: ${fmtQty(p.free)}, Locked: ${fmtQty(p.lock)}` : '';
       return `<tr>
@@ -100,6 +116,7 @@ export function renderPortfolio(balanceResult, tickerResult) {
         <td class="num">${priceStr}</td>
         <td class="num">${valueStr}</td>
         <td class="num">${changeStr}</td>
+        <td class="num">${pnlStr}</td>
         <td class="num pct-col">${pctStr}</td>
       </tr>`;
     }).join('');
@@ -172,7 +189,7 @@ function computeOrderPnL(orders) {
       basis[base] = b;
     }
   }
-  return pnlMap;
+  return { pnlMap, basis };
 }
 
 export function renderOrders(result) {
@@ -190,7 +207,7 @@ export function renderOrders(result) {
     tbody.innerHTML = '<tr><td colspan="10" class="empty">No orders</td></tr>';
     return true;
   }
-  const pnlMap = computeOrderPnL(rows);
+  const { pnlMap } = computeOrderPnL(rows);
   tbody.innerHTML = rows.map((o, idx) => {
     const pair = o.Pair ?? o.pair ?? '—';
     const side = o.Side ?? o.side ?? '—';
