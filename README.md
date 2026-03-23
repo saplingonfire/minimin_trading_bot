@@ -229,6 +229,7 @@ Read-only web UI to monitor your Roostoo account (balance, pending orders, serve
 - **Kill switch** (`kill_switch_check`): Halts or de-risks the bot on consecutive API errors, clock drift, or extreme market moves.
 - **Regime filter**: BTC MA20 trend filter determines risk-on/risk-off. The throttled strategy uses a three-tier regime (strong/soft/off) with sub-daily evaluation (default every 6 hours, configurable via `regime.regime_eval_hours`). When evaluation runs sub-daily, hourly price closes are used for the MA computation.
 - **Breakout fast-entry**: When in `risk_off`, if the live BTC price exceeds the daily MA20 by a configurable threshold (default 2%), the bot immediately enters `risk_on_soft` at reduced exposure (default 35%) and triggers a re-rank. This reduces upside entry lag from ~24 hours to ~5 minutes for strong breakouts. A cooldown (default 60 min) prevents repeated triggers. See `regime.breakout_threshold_pct`, `regime.breakout_exposure`, and `regime.breakout_cooldown_min` in `config.yaml`.
+- **Turnover controls**: Ranking buffer zone (`rank_buffer`, default 2) keeps held assets in the portfolio if they rank within top N+buffer, preventing oscillation-driven churn. Minimum hold period (`min_hold_hours`, default 4h) blocks premature stale-sells of recently entered positions; bypassed on risk-off regime for safety.
 - Config: see `strategy.risk` and `strategy.regime` in `config.yaml`.
 
 ---
