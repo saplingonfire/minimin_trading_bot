@@ -82,6 +82,7 @@ class Executor:
         max_order_notional: float | None = None,
         order_spacing_sec: float | None = None,
         trades_log_path: str | None = None,
+        stale_order_timeout_sec: float | None = None,
     ) -> None:
         self._client = client
         self._dry_run = dry_run
@@ -90,6 +91,7 @@ class Executor:
         self._max_order_notional = max_order_notional
         self._order_spacing_sec = order_spacing_sec
         self._trades_log_path = trades_log_path
+        self._stale_order_timeout_sec = stale_order_timeout_sec
 
     def _append_trade(self, record: dict[str, Any]) -> None:
         """Append one JSONL line to trades_log_path when set."""
@@ -298,6 +300,54 @@ class Executor:
         if last_err:
             return {"error": "api_error", "message": str(last_err)}
         return {"error": "unknown"}
+
+    def cancel_stale_orders(self, pairs: list[str], server_time_ms: int) -> int:
+        """Cancel pending limit orders older than stale_order_timeout_sec. Returns count cancelled."""
+        if self._stale_order_timeout_sec is None or self._stale_order_timeout_sec <= 0:
+            return 0
+        if self._dry_run:
+            return 0
+        timeout_ms = self._stale_order_timeout_sec * 1000
+        cancelled = 0
+        for pair in pairs:
+            p = _normalize_pair(pair)
+            try:
+                result = self._client.query_order(pair=p, pending_only=True)
+            except RoostooAPIError as e:
+                logger.debug("stale_order query pair=%s failed: %s", p, e.message)
+                continue
+            orders = result.get("OrderMatched") or result.get("order_matched") or []
+            for order in orders:
+                oid = order.get("OrderID") or order.get("order_id")
+                if not oid:
+                    continue
+                create_ts = (
+                    order.get("CreateTimestamp")
+                    or order.get("createTimestamp")
+                    or order.get("CreateTime")
+                    or order.get("createTime")
+                )
+                if create_ts is None:
+                    continue
+                age_ms = server_time_ms - int(create_ts)
+                if age_ms < timeout_ms:
+                    continue
+                try:
+                    self._client.cancel_order(order_id=str(oid))
+                    cancelled += 1
+                    logger.info(
+                        "stale_order_cancel pair=%s order_id=%s age_sec=%.0f",
+                        p, oid, age_ms / 1000,
+                    )
+                    self._append_trade({
+                        "action": "cancel_stale", "pair": p, "order_id": str(oid),
+                        "age_sec": round(age_ms / 1000), "success": True, "dry_run": False,
+                    })
+                except RoostooAPIError as e:
+                    logger.warning(
+                        "stale_order_cancel failed pair=%s order_id=%s: %s", p, oid, e.message,
+                    )
+        return cancelled
 
     def cancel_orders_for_pairs(self, pairs: list[str]) -> list[dict[str, Any]]:
         """Cancel all pending orders for the given pairs. Used on shutdown."""

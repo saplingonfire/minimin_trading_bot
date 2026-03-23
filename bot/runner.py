@@ -86,6 +86,7 @@ def run(settings: BotSettings) -> None:
         max_order_notional=settings.max_order_notional,
         order_spacing_sec=order_spacing_sec if isinstance(order_spacing_sec, (int, float)) else None,
         trades_log_path=settings.trades_log_path,
+        stale_order_timeout_sec=settings.stale_order_timeout_sec,
     )
 
     strategy_cls = STRATEGIES[strategy_name]
@@ -176,6 +177,12 @@ def run(settings: BotSettings) -> None:
             try:
                 if price_store is not None and context.ticker:
                     price_store.append_ticker_snapshot(context.ticker, context.server_time_ms)
+
+                managed = strategy.get_managed_pairs()
+                if managed:
+                    stale_cancelled = executor.cancel_stale_orders(managed, context.server_time_ms)
+                    if stale_cancelled:
+                        logger.info("stale_order_cleanup cancelled=%s", stale_cancelled)
 
                 build_ms = (time.perf_counter() - tick_start) * 1000
 

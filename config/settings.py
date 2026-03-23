@@ -26,6 +26,7 @@ class BotSettings:
     price_store_path: str | None = None
     max_orders_per_cycle: int | None = None
     order_spacing_sec: float | None = None
+    stale_order_timeout_sec: float | None = None
     # Log files (append-only; bot only); defaults match test account when unset in load_settings
     trades_log_path: str = "trades-test.log"
     roostoo_api_log_path: str = "roostoo-api-test.log"
@@ -195,6 +196,13 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
     if order_spacing_sec is None:
         order_spacing_sec = _parse_float(os.environ.get("BOT_ORDER_SPACING_SEC"))
 
+    stale_order_timeout_sec = overrides.get("stale_order_timeout_sec")
+    if stale_order_timeout_sec is None:
+        execution_yaml = yaml_config.get("execution") or {}
+        raw_stale = execution_yaml.get("stale_order_timeout_sec")
+        if raw_stale is not None:
+            stale_order_timeout_sec = float(raw_stale)
+
     if not api_key or not secret_key:
         which = "live (ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY)" if live else "test (ROOSTOO_TEST_API_KEY, ROOSTOO_TEST_SECRET_KEY)"
         raise ValueError(f"Credentials are required for {which}; set in env or .env")
@@ -229,6 +237,7 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
         price_store_path=price_store_path,
         max_orders_per_cycle=max_orders_per_cycle,
         order_spacing_sec=order_spacing_sec,
+        stale_order_timeout_sec=stale_order_timeout_sec,
         trades_log_path=trades_log_path,
         roostoo_api_log_path=roostoo_api_log_path,
     )

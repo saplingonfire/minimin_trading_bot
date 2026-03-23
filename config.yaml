@@ -59,6 +59,7 @@ execution:
   cycle_sec: 300
   max_orders_per_cycle: 3
   order_spacing_sec: 30
+  stale_order_timeout_sec: 600  # Cancel unfilled limit orders older than 10 min
   fees:
     market_bps: 10
     limit_bps: 5
