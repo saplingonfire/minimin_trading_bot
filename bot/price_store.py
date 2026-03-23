@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Default BTC pair for regime and warmup
 BTC_PAIR = "BTC/USD"
-MS_PER_DAY = 24 * 3600 * 1000
+MS_PER_HOUR = 3600 * 1000
+MS_PER_DAY = 24 * MS_PER_HOUR
 
 # SQLite: wait for locks; WAL improves concurrent access (persists on DB file)
 _CONNECT_TIMEOUT_SEC = 8.0
@@ -170,6 +171,34 @@ class PriceStore:
             by_day[day_key] = price
         sorted_days = sorted(by_day.keys())
         return [by_day[d] for d in sorted_days[-limit_days:]]
+
+    def get_hourly_closes(self, symbol: str, limit_hours: int) -> list[float]:
+        """Return the last ``limit_hours`` hourly close prices for *symbol* (oldest first).
+
+        Hourly close = last snapshot in that UTC hour bucket.  Falls back to an
+        empty list when no data is available.
+        """
+        symbol = _normalize_pair(symbol)
+        if not symbol or limit_hours <= 0:
+            return []
+        return _with_retry(lambda: self._get_hourly_closes_impl(symbol, limit_hours))
+
+    def _get_hourly_closes_impl(self, symbol: str, limit_hours: int) -> list[float]:
+        with self._conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT ts_utc_ms, last_price FROM price_snapshots WHERE symbol = ? ORDER BY ts_utc_ms",
+                (symbol,),
+            )
+            rows = cur.fetchall()
+        if not rows:
+            return []
+        by_hour: dict[int, float] = {}
+        for ts_ms, price in rows:
+            hour_key = ts_ms // MS_PER_HOUR
+            by_hour[hour_key] = price
+        sorted_hours = sorted(by_hour.keys())
+        return [by_hour[h] for h in sorted_hours[-limit_hours:]]
 
     def count_days_with_data(self, symbol: str) -> int:
         """Number of distinct UTC days that have at least one snapshot for symbol."""

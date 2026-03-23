@@ -64,11 +64,15 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._min_days_history = int(config.get("min_days_history", 3))
         self._rank_interval_min = int(config.get("rank_interval_min", 60))
         self._regime_utc_hour = int(config.get("regime_utc_hour", 0))
+        self._regime_eval_hours = int(config.get("regime_eval_hours", 24))
+        if self._regime_eval_hours < 1:
+            self._regime_eval_hours = 24
+        self._regime_eval_ms = self._regime_eval_hours * 3600 * 1000
         self._min_rebalance_pct = float(config.get("min_rebalance_pct", 0.02))
         self._pair_cooldown_min = int(config.get("pair_cooldown_min", 30))
         self._regime: str = REGIME_RISK_OFF
         self._regime_candidate: str | None = None
-        self._last_regime_eval_day: int | None = None
+        self._last_regime_eval_bucket: int | None = None
         self._last_rank_time_ms: int | None = None
         self._target_weights: dict[str, float] = {}
         self._portfolio_peak: float = 0.0
@@ -83,7 +87,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
     def on_start(self) -> None:
         self._regime = REGIME_RISK_OFF
         self._regime_candidate = None
-        self._last_regime_eval_day = None
+        self._last_regime_eval_bucket = None
         self._last_rank_time_ms = None
         self._target_weights = {}
         self._portfolio_peak = 0.0
@@ -129,12 +133,12 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             self._record_trade(pair, now_ms)
         return signals
 
-    def _is_daily_regime_time(self, server_time_ms: int) -> bool:
-        """True if we should re-evaluate regime (once per UTC day)."""
-        day_key = server_time_ms // MS_PER_DAY
-        if self._last_regime_eval_day is None:
+    def _is_regime_eval_time(self, server_time_ms: int) -> bool:
+        """True if we should re-evaluate regime (every ``_regime_eval_hours`` hours)."""
+        bucket = server_time_ms // self._regime_eval_ms
+        if self._last_regime_eval_bucket is None:
             return True
-        return day_key != self._last_regime_eval_day
+        return bucket != self._last_regime_eval_bucket
 
     def _should_rerank(self, server_time_ms: int) -> bool:
         if self._last_rank_time_ms is None:
@@ -151,7 +155,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             self._regime,
             self._regime_candidate,
         )
-        self._last_regime_eval_day = context.server_time_ms // MS_PER_DAY
+        self._last_regime_eval_bucket = context.server_time_ms // self._regime_eval_ms
         logger.info("regime=%s candidate=%s", self._regime, self._regime_candidate)
 
     def _cross_sectional_rank(self, context: TradingContext) -> list[tuple[str, float, float]]:
@@ -249,7 +253,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
                 self._target_weights = {}
 
         now = context.server_time_ms
-        if self._is_daily_regime_time(now):
+        if self._is_regime_eval_time(now):
             self._compute_regime(context)
 
         if self._should_rerank(now):

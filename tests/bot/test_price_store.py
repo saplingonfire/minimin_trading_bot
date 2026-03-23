@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from bot.price_store import (
     MS_PER_DAY,
+    MS_PER_HOUR,
     PriceStore,
     build_daily_bars_from_closes,
     warmup_from_binance_klines,
@@ -61,6 +62,45 @@ def test_journal_mode_wal() -> None:
             assert row[0].lower() == "wal"
         finally:
             conn.close()
+
+
+def test_get_hourly_closes() -> None:
+    """Hourly closes bucket by hour and return oldest-first."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        store = PriceStore(Path(tmp) / "prices.db")
+        base_ts = 1000 * MS_PER_DAY
+        for h in range(5):
+            ts = base_ts + h * MS_PER_HOUR
+            store.append_ticker_snapshot(
+                {"BTC/USD": {"LastPrice": 40000 + h * 100}}, ts,
+            )
+        closes = store.get_hourly_closes("BTC/USD", 10)
+        assert closes == [40000, 40100, 40200, 40300, 40400]
+
+
+def test_get_hourly_closes_multiple_per_hour() -> None:
+    """When multiple snapshots land in the same hour, last-write wins."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        store = PriceStore(Path(tmp) / "prices.db")
+        base_ts = 1000 * MS_PER_DAY
+        store.append_ticker_snapshot({"BTC/USD": {"LastPrice": 40000}}, base_ts)
+        store.append_ticker_snapshot({"BTC/USD": {"LastPrice": 41000}}, base_ts + 5 * 60 * 1000)
+        closes = store.get_hourly_closes("BTC/USD", 5)
+        assert closes == [41000]
+
+
+def test_get_hourly_closes_limit() -> None:
+    """Limit parameter truncates to most recent N hours."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        store = PriceStore(Path(tmp) / "prices.db")
+        base_ts = 1000 * MS_PER_DAY
+        for h in range(10):
+            store.append_ticker_snapshot(
+                {"BTC/USD": {"LastPrice": 30000 + h * 100}}, base_ts + h * MS_PER_HOUR,
+            )
+        closes = store.get_hourly_closes("BTC/USD", 3)
+        assert len(closes) == 3
+        assert closes == [30700, 30800, 30900]
 
 
 def test_connect_retries_on_operational_error() -> None:
