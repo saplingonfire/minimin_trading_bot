@@ -8,7 +8,7 @@ Modular crypto trading bot for the [Roostoo](https://github.com/roostoo/Roostoo-
 
 - **Roostoo SDK** — Python client for Roostoo Public API v3: server time, exchange info, ticker, balance, place/cancel/query orders (market and limit). HMAC signing, configurable base URL.
 - **Modular bot** — Strategy abstraction (`Strategy.next(context) -> signals`), execution layer (precision, risk guards, retries), market-data facade. Add strategies under `bot/strategies/` and register by name.
-- **Fee-aware trading** — Configurable trading fees. Strategies adjust buy quantities to account for fees and use dead-zone filters to prevent unprofitable churn from small rebalances. Backtest engine deducts fees from simulated fills.
+- **Fee-aware trading** — Configurable trading fees. By default, strategies use **aggressive LIMIT orders** (priced just above MaxBid for buys, just below MinAsk for sells) to qualify for the 0.05% limit fee tier instead of the 0.10% market fee, while still filling immediately. Strategies adjust buy quantities to account for fees and use dead-zone filters to prevent unprofitable churn from small rebalances. Backtest engine deducts fees from simulated fills. Toggled via `use_limit_fee_optimization` in config.
 - **Test vs live credentials** — Two credential sets (env: `ROOSTOO_TEST_*` and `ROOSTOO_API_KEY`/`ROOSTOO_SECRET_KEY`). Switch with `BOT_LIVE` or CLI `--live` / `--test`.
 - **Config** — Env vars (`.env`) plus optional `config.yaml` for strategy params, execution pacing, risk, and backtest settings. Strategy section is merged into `strategy_params` for the chosen strategy.
 - **Risk and kill switch** — Drawdown-based de-risking, market-move circuit breakers, consecutive API error halt, optional cancel-on-stop for managed pairs.
@@ -119,6 +119,7 @@ Optional. Used for strategy params, execution pacing, data paths, and backtest.
 
 - **strategy** — Merged into `strategy_params` for the strategy named in `BOT_STRATEGY`. Includes strategy-specific tuning parameters, **risk** thresholds, and optional **regime** settings. See `config.yaml.example` for the full parameter list.
 - **execution** — cycle_sec (tick interval), max_orders_per_cycle, order_spacing_sec, **fees** (market_bps, limit_bps — trading fee rates in basis points, automatically injected into strategy params).
+- **strategy.use_limit_fee_optimization** — When `true` (default), strategies emit aggressive LIMIT orders to qualify for the cheaper 0.05% fee tier. Falls back to MARKET when bid/ask data is unavailable. Set to `false` to use MARKET orders exclusively.
 - **data** — db_path (price store), log_dir (optional directory for default trade/API JSONL logs when `BOT_TRADES_LOG` / `BOT_ROOSTOO_API_LOG` are unset).
 - **backtest** — start_date, end_date, initial_balance, data_dir.
 - **strategy.exclude_pairs** — Optional list of pairs to exclude from the tradeable universe (e.g. `["TRUMP/USD", "PENGU/USD"]`). Env override: `BOT_EXCLUDE_PAIRS` (comma-separated).
@@ -200,7 +201,7 @@ python scripts/run_backtest.py --config config.yaml --data-dir data/binance [--s
 - `--exclude-pairs` — Comma-separated pairs to exclude (overrides `strategy.exclude_pairs` and `BOT_EXCLUDE_PAIRS`).
 - Ticker exclusion also uses **`strategy.exclude_pairs`** in config and **`BOT_EXCLUDE_PAIRS`** in `.env` (same as live bot).
 - Set `BOT_STRATEGY` in env (or in .env) to choose the strategy to backtest.
-- **Fee simulation** — The backtest deducts trading fees on every simulated fill using the rates from `execution.fees` (default: 10 bps market, 5 bps limit). The performance report includes total fees paid. Strategy dead-zone and buy-qty adjustments are also active during backtesting.
+- **Fee simulation** — The backtest deducts trading fees on every simulated fill using the rates from `execution.fees` (default: 10 bps market, 5 bps limit). When `use_limit_fee_optimization` is enabled (default), strategies emit LIMIT orders in backtest mode too — the engine generates synthetic MaxBid/MinAsk from close prices so limit-price logic works correctly. The performance report includes total fees paid. Strategy dead-zone and buy-qty adjustments are also active during backtesting.
 
 ---
 
