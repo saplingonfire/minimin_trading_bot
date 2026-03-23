@@ -65,7 +65,6 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._min_price_usd = float(config.get("min_price_usd", 0.0))
         self._min_days_history = int(config.get("min_days_history", 3))
         self._rank_interval_min = int(config.get("rank_interval_min", 60))
-        self._regime_utc_hour = int(config.get("regime_utc_hour", 0))
         self._regime_eval_hours = int(config.get("regime_eval_hours", 24))
         if self._regime_eval_hours < 1:
             self._regime_eval_hours = 24
@@ -100,6 +99,16 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._effective_exposure = self._target_exposure
         self._last_trade_time = {}
         self._position_entry_time = {}
+
+    def _is_risk_off(self) -> bool:
+        return self._regime == REGIME_RISK_OFF
+
+    def _get_base_exposure(self) -> float:
+        return self._target_exposure
+
+    def _pre_rerank(self, context: TradingContext, now: int) -> bool:
+        """Hook called before rerank check. Return True to force a rerank."""
+        return False
 
     def _is_pair_on_cooldown(self, pair: str, now_ms: int) -> bool:
         if self._pair_cooldown_min <= 0:
@@ -159,7 +168,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         signals: list[Signal] = []
         target_bases = {parse_pair(p)[0] for p in self._target_weights}
         hold_ms = self._min_hold_hours * 3600 * 1000
-        is_risk_off = self._regime == REGIME_RISK_OFF
+        is_risk_off = self._is_risk_off()
         for pair in tradeable:
             base, _ = parse_pair(pair)
             if base in target_bases:
@@ -246,7 +255,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         return scored
 
     def _compute_target_weights(self, context: TradingContext) -> dict[str, float]:
-        if self._regime == REGIME_RISK_OFF:
+        if self._is_risk_off():
             return {}
         ranked = self._cross_sectional_rank(context)
         if not ranked:
@@ -299,13 +308,15 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         portfolio_value = self._portfolio_value(context, pairs)
         if portfolio_value > self._portfolio_peak:
             self._portfolio_peak = portfolio_value
+
+        base_exposure = self._get_base_exposure()
         if should_restore_exposure(portfolio_value, self._portfolio_peak):
-            self._effective_exposure = self._target_exposure
+            self._effective_exposure = base_exposure
         else:
             exposure, force_risk_off = get_drawdown_exposure(
                 portfolio_value,
                 self._portfolio_peak,
-                self._target_exposure,
+                base_exposure,
             )
             self._effective_exposure = exposure
             if force_risk_off:
@@ -316,7 +327,9 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         if self._is_regime_eval_time(now):
             self._compute_regime(context)
 
-        if self._should_rerank(now):
+        force_rerank = self._pre_rerank(context, now)
+
+        if self._should_rerank(now) or force_rerank:
             self._target_weights = self._compute_target_weights(context)
             self._last_rank_time_ms = now
             for pair in self._target_weights:
@@ -331,7 +344,6 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         for pair, w in self._target_weights.items():
             target_usd[pair] = portfolio_value * w
 
-        now = context.server_time_ms
         stale_sells = self._sell_stale_positions(context, pairs, now)
 
         sell_signals: list[Signal] = []

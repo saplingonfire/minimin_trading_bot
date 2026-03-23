@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from bot.base import Signal, TradingContext
+from bot.base import TradingContext
 from bot.indicators import sma
-from bot.price_store import BTC_PAIR, MS_PER_DAY
-from bot.risk import get_drawdown_exposure, should_restore_exposure
+from bot.price_store import BTC_PAIR
 from bot.strategies.hybrid_trend_cross_sectional import HybridTrendCrossSectionalStrategy
-from bot.strategies.utils import get_balance_free, get_price, parse_pair, tradeable_pairs
+from bot.strategies.utils import get_price
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +109,12 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
             return soft
         return 0.0
 
+    def _is_risk_off(self) -> bool:
+        return self._regime == REGIME_RISK_OFF
+
+    def _get_base_exposure(self) -> float:
+        return self._get_target_exposure()
+
     def _compute_regime(self, context: TradingContext) -> None:
         self._update_btc_regime(context)
 
@@ -151,95 +156,10 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
             return True
         return False
 
-    def _compute_target_weights(self, context: TradingContext) -> dict[str, float]:
-        if self._regime == REGIME_RISK_OFF:
-            return {}
-        return super()._compute_target_weights(context)
-
-    def next(self, context: TradingContext) -> list[Signal]:
-        if context.price_store is None or context.exchange_info is None:
-            return []
-
-        if getattr(context, "risk_force_cash", False):
-            self._regime = REGIME_RISK_OFF
-            self._target_weights = {}
-            return []
-
-        pairs = tradeable_pairs(context.exchange_info, exclude=self._exclude_pairs)
-        portfolio_value = self._portfolio_value(context, pairs)
-        if portfolio_value > self._portfolio_peak:
-            self._portfolio_peak = portfolio_value
-
-        base_target = self._get_target_exposure()
-        if should_restore_exposure(portfolio_value, self._portfolio_peak):
-            self._effective_exposure = base_target
-        else:
-            exposure, force_risk_off = get_drawdown_exposure(
-                portfolio_value,
-                self._portfolio_peak,
-                base_target,
-            )
-            self._effective_exposure = exposure
-            if force_risk_off:
-                self._regime = REGIME_RISK_OFF
-                self._target_weights = {}
-
-        now = context.server_time_ms
-        if self._is_regime_eval_time(now):
-            self._compute_regime(context)
-
+    def _pre_rerank(self, context: TradingContext, now: int) -> bool:
         breakout_triggered = self._check_breakout(context)
-
-        _needs_rerank = self._should_rerank(now) or breakout_triggered
-        if not _needs_rerank and self._effective_exposure > 0 and self._target_weights and all(w == 0.0 for w in self._target_weights.values()):
-            _needs_rerank = True
-        if _needs_rerank:
-            self._target_weights = self._compute_target_weights(context)
-            self._last_rank_time_ms = now
-            for pair in self._target_weights:
-                if pair not in self._position_entry_time:
-                    self._position_entry_time[pair] = now
-            self._position_entry_time = {
-                p: t for p, t in self._position_entry_time.items()
-                if p in self._target_weights
-            }
-
-        target_usd: dict[str, float] = {}
-        for pair, w in self._target_weights.items():
-            target_usd[pair] = portfolio_value * w
-
-        stale_sells = self._sell_stale_positions(context, pairs, now)
-
-        sell_signals: list[Signal] = []
-        buy_signals: list[Signal] = []
-        for pair in self._target_weights:
-            if self._is_pair_on_cooldown(pair, now):
-                continue
-            base, _ = parse_pair(pair)
-            price = get_price(context.ticker, pair)
-            if price <= 0:
-                continue
-            current_qty = get_balance_free(context.balance, base)
-            current_value = current_qty * price
-            target = target_usd.get(pair, 0.0)
-            delta_usd = target - current_value
-            fee_type = self._active_fee_type()
-            fee_threshold = current_value * self._fees.round_trip(fee_type)
-            pct_threshold = target * self._min_rebalance_pct if target > 0 else 0.0
-            if abs(delta_usd) < max(self._min_trade_usd, fee_threshold, pct_threshold):
-                continue
-            qty = abs(delta_usd) / price
-            if delta_usd < 0:
-                to_sell = min(qty, current_qty)
-                if to_sell > 0:
-                    sell_signals.append(self._make_order_signal(pair, "SELL", to_sell, context.ticker))
-                    self._record_trade(pair, now)
-            else:
-                quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
-                spend = min(delta_usd, quote_free)
-                if spend >= self._min_trade_usd and spend > 0:
-                    buy_qty = spend / (price * (1 + self._fees.rate_for(fee_type)))
-                    buy_signals.append(self._make_order_signal(pair, "BUY", buy_qty, context.ticker))
-                    self._record_trade(pair, now)
-
-        return stale_sells + sell_signals + buy_signals
+        if breakout_triggered:
+            return True
+        if self._effective_exposure > 0 and self._target_weights and all(w == 0.0 for w in self._target_weights.values()):
+            return True
+        return False
