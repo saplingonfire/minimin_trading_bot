@@ -21,6 +21,7 @@ strategy:
   min_days_history: 3
   rank_interval_min: 60
   regime_utc_hour: 0
+  use_limit_fee_optimization: true
   max_orders_per_cycle: 2
   order_spacing_sec: 30
   db_path: ./prices.db

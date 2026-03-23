@@ -30,6 +30,10 @@ strategy:
   rank_interval_min: 60
   # UTC hour (0–23) at which regime (BTC vs MA) is re-evaluated once per day.
   regime_utc_hour: 0
+  # Use aggressive LIMIT orders priced above MaxBid (buys) / below MinAsk (sells) to
+  # qualify for the 0.05% limit fee tier instead of the 0.10% market fee. Orders still
+  # fill immediately. Falls back to MARKET when bid/ask data is unavailable.
+  use_limit_fee_optimization: true
   # Optional: pairs to exclude from the tradeable universe (e.g. memecoins). Env: BOT_EXCLUDE_PAIRS (comma-separated).
   # exclude_pairs: ["TRUMP/USD", "PENGU/USD"]
   # Kill-switch / risk-off triggers (passed to runner where applicable).

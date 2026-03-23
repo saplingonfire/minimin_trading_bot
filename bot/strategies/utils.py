@@ -58,6 +58,22 @@ def get_price(ticker: dict[str, Any], pair: str) -> float:
     return float(row.get("LastPrice", row.get("lastPrice", 0)) or 0)
 
 
+def get_max_bid(ticker: dict[str, Any], pair: str) -> float:
+    """Best (highest) bid for pair from ticker. Returns 0.0 if missing."""
+    row = ticker.get(pair) or ticker
+    if not isinstance(row, dict):
+        return 0.0
+    return float(row.get("MaxBid", row.get("maxBid", 0)) or 0)
+
+
+def get_min_ask(ticker: dict[str, Any], pair: str) -> float:
+    """Best (lowest) ask for pair from ticker. Returns 0.0 if missing."""
+    row = ticker.get(pair) or ticker
+    if not isinstance(row, dict):
+        return 0.0
+    return float(row.get("MinAsk", row.get("minAsk", 0)) or 0)
+
+
 def get_volume_usd(ticker: dict[str, Any], pair: str) -> float:
     """24h unit trade value (USD volume proxy) for pair. Returns 0.0 if missing."""
     row = ticker.get(pair) or ticker

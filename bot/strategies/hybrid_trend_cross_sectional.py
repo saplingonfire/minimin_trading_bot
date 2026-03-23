@@ -13,6 +13,8 @@ from bot.risk import get_drawdown_exposure, should_restore_exposure
 from bot.strategies.utils import (
     get_balance_free,
     get_change_pct,
+    get_max_bid,
+    get_min_ask,
     get_price,
     get_volume_usd,
     parse_pair,
@@ -83,6 +85,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             market_rate=float(config.get("fee_market_rate", 0.001)),
             limit_rate=float(config.get("fee_limit_rate", 0.0005)),
         )
+        self._use_limit_fee_opt = bool(config.get("use_limit_fee_optimization", True))
 
     def on_start(self) -> None:
         self._regime = REGIME_RISK_OFF
@@ -104,6 +107,43 @@ class HybridTrendCrossSectionalStrategy(Strategy):
 
     def _record_trade(self, pair: str, now_ms: int) -> None:
         self._last_trade_time[pair] = now_ms
+
+    def _make_order_signal(
+        self,
+        pair: str,
+        side: str,
+        quantity: float,
+        ticker: dict[str, Any],
+    ) -> PlaceOrderSignal:
+        """Build a PlaceOrderSignal, using an aggressive LIMIT when the fee optimization is active.
+
+        BUY: price just above MaxBid triggers the 0.05% limit fee tier while filling immediately.
+        SELL: price just below MinAsk does the same for the sell side.
+        Falls back to MARKET when bid/ask data is unavailable or the book looks crossed.
+        """
+        if not self._use_limit_fee_opt:
+            return PlaceOrderSignal(pair, side, quantity, "MARKET", None)
+
+        max_bid = get_max_bid(ticker, pair)
+        min_ask = get_min_ask(ticker, pair)
+
+        if side == "BUY" and max_bid > 0:
+            if min_ask > 0 and min_ask < max_bid:
+                return PlaceOrderSignal(pair, side, quantity, "MARKET", None)
+            limit_price = max_bid * 1.001
+            return PlaceOrderSignal(pair, side, quantity, "LIMIT", limit_price)
+
+        if side == "SELL" and min_ask > 0:
+            if max_bid > 0 and min_ask < max_bid:
+                return PlaceOrderSignal(pair, side, quantity, "MARKET", None)
+            limit_price = min_ask * 0.999
+            return PlaceOrderSignal(pair, side, quantity, "LIMIT", limit_price)
+
+        return PlaceOrderSignal(pair, side, quantity, "MARKET", None)
+
+    def _active_fee_type(self) -> str:
+        """Return the order type used for fee calculations (dead-zone, sizing)."""
+        return "LIMIT" if self._use_limit_fee_opt else "MARKET"
 
     def _sell_stale_positions(
         self,
@@ -129,7 +169,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             value = qty * price
             if value < self._min_trade_usd:
                 continue
-            signals.append(PlaceOrderSignal(pair, "SELL", qty, "MARKET", None))
+            signals.append(self._make_order_signal(pair, "SELL", qty, context.ticker))
             self._record_trade(pair, now_ms)
         return signals
 
@@ -280,7 +320,8 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             current_value = current_qty * price
             target = target_usd.get(pair, 0.0)
             delta_usd = target - current_value
-            fee_threshold = current_value * self._fees.round_trip("MARKET")
+            fee_type = self._active_fee_type()
+            fee_threshold = current_value * self._fees.round_trip(fee_type)
             pct_threshold = target * self._min_rebalance_pct if target > 0 else 0.0
             if abs(delta_usd) < max(self._min_trade_usd, fee_threshold, pct_threshold):
                 continue
@@ -288,14 +329,14 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             if delta_usd < 0:
                 to_sell = min(qty, current_qty)
                 if to_sell > 0:
-                    sell_signals.append(PlaceOrderSignal(pair, "SELL", to_sell, "MARKET", None))
+                    sell_signals.append(self._make_order_signal(pair, "SELL", to_sell, context.ticker))
                     self._record_trade(pair, now)
             else:
                 quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
                 spend = min(delta_usd, quote_free)
                 if spend >= self._min_trade_usd and spend > 0:
-                    buy_qty = spend / (price * (1 + self._fees.market_rate))
-                    buy_signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
+                    buy_qty = spend / (price * (1 + self._fees.rate_for(fee_type)))
+                    buy_signals.append(self._make_order_signal(pair, "BUY", buy_qty, context.ticker))
                     self._record_trade(pair, now)
 
         return stale_sells + sell_signals + buy_signals

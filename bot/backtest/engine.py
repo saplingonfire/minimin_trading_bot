@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Warmup: need enough days for regime (ma_window+2) and momentum (8)
 MIN_DAYS_FOR_MOMENTUM = 8
+_SYNTHETIC_HALF_SPREAD = 0.0005  # 5 bps each side for synthetic bid/ask
 
 
 @dataclass(frozen=True)
@@ -204,8 +205,11 @@ def run_backtest(
             ticker_snap: dict[str, Any] = {}
             for p in pairs:
                 if day_ts in close_at.get(p, {}):
+                    px = close_at[p][day_ts]
                     ticker_snap[p] = {
-                        "LastPrice": close_at[p][day_ts],
+                        "LastPrice": px,
+                        "MaxBid": px * (1 - _SYNTHETIC_HALF_SPREAD),
+                        "MinAsk": px * (1 + _SYNTHETIC_HALF_SPREAD),
                         "UnitTradeValue": volume_at.get(p, {}).get(day_ts, 0),
                         "Change": 0.0,
                     }
@@ -238,6 +242,8 @@ def run_backtest(
                 change = (curr - prev) / prev if prev and prev > 0 else 0.0
                 ticker[p] = {
                     "LastPrice": curr,
+                    "MaxBid": curr * (1 - _SYNTHETIC_HALF_SPREAD),
+                    "MinAsk": curr * (1 + _SYNTHETIC_HALF_SPREAD),
                     "UnitTradeValue": volume_at.get(p, {}).get(day_ts, 0),
                     "Change": change,
                 }

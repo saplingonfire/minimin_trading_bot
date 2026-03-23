@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from bot.base import PlaceOrderSignal, Signal, TradingContext
+from bot.base import Signal, TradingContext
 from bot.indicators import sma
 from bot.price_store import BTC_PAIR, MS_PER_DAY
 from bot.risk import get_drawdown_exposure, should_restore_exposure
@@ -216,7 +216,8 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
             current_value = current_qty * price
             target = target_usd.get(pair, 0.0)
             delta_usd = target - current_value
-            fee_threshold = current_value * self._fees.round_trip("MARKET")
+            fee_type = self._active_fee_type()
+            fee_threshold = current_value * self._fees.round_trip(fee_type)
             pct_threshold = target * self._min_rebalance_pct if target > 0 else 0.0
             if abs(delta_usd) < max(self._min_trade_usd, fee_threshold, pct_threshold):
                 continue
@@ -224,14 +225,14 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
             if delta_usd < 0:
                 to_sell = min(qty, current_qty)
                 if to_sell > 0:
-                    sell_signals.append(PlaceOrderSignal(pair, "SELL", to_sell, "MARKET", None))
+                    sell_signals.append(self._make_order_signal(pair, "SELL", to_sell, context.ticker))
                     self._record_trade(pair, now)
             else:
                 quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
                 spend = min(delta_usd, quote_free)
                 if spend >= self._min_trade_usd and spend > 0:
-                    buy_qty = spend / (price * (1 + self._fees.market_rate))
-                    buy_signals.append(PlaceOrderSignal(pair, "BUY", buy_qty, "MARKET", None))
+                    buy_qty = spend / (price * (1 + self._fees.rate_for(fee_type)))
+                    buy_signals.append(self._make_order_signal(pair, "BUY", buy_qty, context.ticker))
                     self._record_trade(pair, now)
 
         return stale_sells + sell_signals + buy_signals
