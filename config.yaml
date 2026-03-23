@@ -20,6 +20,8 @@ strategy:
   pair_cooldown_min: 15
   min_days_history: 3
   rank_interval_min: 30
+  rank_buffer: 2              # Held assets stay if within top N+buffer (hysteresis)
+  min_hold_hours: 4.0         # Min hours before a position can be stale-sold
   regime_utc_hour: 0
   use_limit_fee_optimization: true
   max_orders_per_cycle: 3

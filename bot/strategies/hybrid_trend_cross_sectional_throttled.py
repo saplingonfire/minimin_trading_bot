@@ -196,6 +196,13 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
         if _needs_rerank:
             self._target_weights = self._compute_target_weights(context)
             self._last_rank_time_ms = now
+            for pair in self._target_weights:
+                if pair not in self._position_entry_time:
+                    self._position_entry_time[pair] = now
+            self._position_entry_time = {
+                p: t for p, t in self._position_entry_time.items()
+                if p in self._target_weights
+            }
 
         target_usd: dict[str, float] = {}
         for pair, w in self._target_weights.items():

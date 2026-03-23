@@ -86,6 +86,9 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             limit_rate=float(config.get("fee_limit_rate", 0.0005)),
         )
         self._use_limit_fee_opt = bool(config.get("use_limit_fee_optimization", True))
+        self._rank_buffer = int(config.get("rank_buffer", 2))
+        self._min_hold_hours = float(config.get("min_hold_hours", 4.0))
+        self._position_entry_time: dict[str, int] = {}
 
     def on_start(self) -> None:
         self._regime = REGIME_RISK_OFF
@@ -96,6 +99,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._portfolio_peak = 0.0
         self._effective_exposure = self._target_exposure
         self._last_trade_time = {}
+        self._position_entry_time = {}
 
     def _is_pair_on_cooldown(self, pair: str, now_ms: int) -> bool:
         if self._pair_cooldown_min <= 0:
@@ -154,12 +158,18 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         """SELL any held asset that is tradeable but no longer in _target_weights."""
         signals: list[Signal] = []
         target_bases = {parse_pair(p)[0] for p in self._target_weights}
+        hold_ms = self._min_hold_hours * 3600 * 1000
+        is_risk_off = self._regime == REGIME_RISK_OFF
         for pair in tradeable:
             base, _ = parse_pair(pair)
             if base in target_bases:
                 continue
             if self._is_pair_on_cooldown(pair, now_ms):
                 continue
+            if not is_risk_off and hold_ms > 0:
+                entry_time = self._position_entry_time.get(pair)
+                if entry_time is not None and (now_ms - entry_time) < hold_ms:
+                    continue
             qty = get_balance_free(context.balance, base)
             if qty <= 0:
                 continue
@@ -243,10 +253,20 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             return {}
         n_cut = max(1, int(len(ranked) * 0.20))
         top_pool = ranked[:-n_cut] if n_cut < len(ranked) else ranked
-        top_n = top_pool[: self._n]
-        if not top_n:
+
+        held_bases = {parse_pair(p)[0] for p in self._target_weights}
+        selected: list[tuple[str, float, float]] = []
+        for pair, mom, vol in top_pool:
+            base = parse_pair(pair)[0]
+            rank = len(selected)
+            if rank < self._n:
+                selected.append((pair, mom, vol))
+            elif base in held_bases and rank < self._n + self._rank_buffer:
+                selected.append((pair, mom, vol))
+
+        if not selected:
             return {}
-        inv_vols = {p: 1.0 / vol for p, _, vol in top_n}
+        inv_vols = {p: 1.0 / vol for p, _, vol in selected}
         total_iv = sum(inv_vols.values())
         raw = {p: inv_vols[p] / total_iv for p in inv_vols}
         capped = {p: min(w, self._max_weight_per_coin) for p, w in raw.items()}
@@ -299,6 +319,13 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         if self._should_rerank(now):
             self._target_weights = self._compute_target_weights(context)
             self._last_rank_time_ms = now
+            for pair in self._target_weights:
+                if pair not in self._position_entry_time:
+                    self._position_entry_time[pair] = now
+            self._position_entry_time = {
+                p: t for p, t in self._position_entry_time.items()
+                if p in self._target_weights
+            }
 
         target_usd: dict[str, float] = {}
         for pair, w in self._target_weights.items():
