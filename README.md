@@ -30,7 +30,7 @@ minimin_trading_bot/
 │   ├── market.py         # build_context (ticker, balance, pending orders)
 │   ├── execution.py      # Signal → orders; precision, risk guards, retries
 │   ├── risk.py           # Drawdown management, kill switch
-│   ├── price_store.py    # SQLite price history
+│   ├── price_store.py    # SQLite price history (daily + hourly closes)
 │   ├── regime.py         # Market regime detection
 │   ├── strategies/       # Strategy implementations + registry
 │   └── backtest/         # Backtest engine and report
@@ -226,8 +226,9 @@ Read-only web UI to monitor your Roostoo account (balance, pending orders, serve
 
 - **Drawdown-based de-risking** (`bot/risk.py`): Exposure is automatically reduced as the portfolio draws down from its peak, with configurable thresholds.
 - **Kill switch** (`kill_switch_check`): Halts or de-risks the bot on consecutive API errors, clock drift, or extreme market moves.
-- **Regime filter**: Strategies that use a market regime gate will go to cash when conditions indicate risk-off.
-- Config: see `strategy.risk` in `config.yaml`.
+- **Regime filter**: BTC MA20 trend filter determines risk-on/risk-off. The throttled strategy uses a three-tier regime (strong/soft/off) with sub-daily evaluation (default every 6 hours, configurable via `regime.regime_eval_hours`). When evaluation runs sub-daily, hourly price closes are used for the MA computation.
+- **Breakout fast-entry**: When in `risk_off`, if the live BTC price exceeds the daily MA20 by a configurable threshold (default 2%), the bot immediately enters `risk_on_soft` at reduced exposure (default 35%) and triggers a re-rank. This reduces upside entry lag from ~24 hours to ~5 minutes for strong breakouts. A cooldown (default 60 min) prevents repeated triggers. See `regime.breakout_threshold_pct`, `regime.breakout_exposure`, and `regime.breakout_cooldown_min` in `config.yaml`.
+- Config: see `strategy.risk` and `strategy.regime` in `config.yaml`.
 
 ---
 
