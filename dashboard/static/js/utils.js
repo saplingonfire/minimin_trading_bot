@@ -6,6 +6,13 @@ export function fmtUsd(n) {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+export function fmtPrice(n) {
+  if (n === 0) return '0';
+  if (n >= 1) return Number(n.toPrecision(6)).toLocaleString(undefined, { maximumFractionDigits: 6 });
+  const s = n.toPrecision(6);
+  return Number(s).toLocaleString(undefined, { maximumSignificantDigits: 6 });
+}
+
 export function fmtQty(n) {
   if (n >= 1000) return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (n >= 1) return n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 });

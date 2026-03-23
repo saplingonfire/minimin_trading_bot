@@ -3,7 +3,7 @@
  * Each renderer receives Promise.allSettled result objects.
  */
 
-import { fmtUsd, fmtQty, timeAgo, statusBadge, setCardLoading, setCardError } from './utils.js';
+import { fmtUsd, fmtPrice, fmtQty, timeAgo, statusBadge, setCardLoading, setCardError } from './utils.js';
 import { getTickerRow, extractOrders } from './api.js';
 
 export function renderServerTime(result) {
@@ -130,6 +130,51 @@ export function renderPendingCount(result) {
   return true;
 }
 
+function computeOrderPnL(orders) {
+  const filled = orders
+    .map((o, i) => ({ o, i }))
+    .filter(({ o }) => {
+      const s = (o.Status ?? o.status ?? '').toLowerCase();
+      return s === 'filled' || s === 'completed';
+    });
+  filled.sort((a, b) => {
+    const ta = a.o.CreateTimestamp ?? a.o.createTimestamp ?? 0;
+    const tb = b.o.CreateTimestamp ?? b.o.createTimestamp ?? 0;
+    return ta - tb;
+  });
+
+  const basis = {};
+  const pnlMap = new Map();
+
+  for (const { o, i } of filled) {
+    const pair = o.Pair ?? o.pair ?? '';
+    const base = pair.split('/')[0];
+    const side = (o.Side ?? o.side ?? '').toUpperCase();
+    const qty = Number(o.FilledQuantity ?? o.filledQuantity ?? 0);
+    const price = Number(o.FilledAverPrice ?? o.filledAverPrice ?? 0);
+    if (!base || qty <= 0 || price <= 0) continue;
+
+    if (side === 'BUY') {
+      const b = basis[base] ?? { cost: 0, qty: 0 };
+      b.cost += qty * price;
+      b.qty += qty;
+      basis[base] = b;
+    } else if (side === 'SELL') {
+      const b = basis[base] ?? { cost: 0, qty: 0 };
+      const avgCost = b.qty > 0 ? b.cost / b.qty : 0;
+      const pnl = qty * (price - avgCost);
+      pnlMap.set(i, pnl);
+      if (b.qty > 0) {
+        const costAlloc = avgCost * qty;
+        b.cost = Math.max(0, b.cost - costAlloc);
+        b.qty = Math.max(0, b.qty - qty);
+      }
+      basis[base] = b;
+    }
+  }
+  return pnlMap;
+}
+
 export function renderOrders(result) {
   const errEl = document.getElementById('orders-err');
   errEl.hidden = true;
@@ -142,10 +187,11 @@ export function renderOrders(result) {
   const rows = extractOrders(result.value);
   const tbody = document.getElementById('orders-body');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">No orders</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No orders</td></tr>';
     return true;
   }
-  tbody.innerHTML = rows.map(o => {
+  const pnlMap = computeOrderPnL(rows);
+  tbody.innerHTML = rows.map((o, idx) => {
     const pair = o.Pair ?? o.pair ?? '—';
     const side = o.Side ?? o.side ?? '—';
     const sideClass = side.toLowerCase() === 'buy' ? 'side-buy' : side.toLowerCase() === 'sell' ? 'side-sell' : '';
@@ -164,9 +210,17 @@ export function renderOrders(result) {
     const filledStr = filledQty > 0
       ? `<span class="fill-bar-wrap">${fmtQty(filledQty)}<span class="fill-bar"><span class="fill-bar-inner" style="width:${fillPct}%"></span></span></span>`
       : '—';
-    const avgPriceStr = avgPrice > 0 ? '$' + fmtUsd(avgPrice) : '—';
+    const avgPriceStr = avgPrice > 0 ? '$' + fmtPrice(avgPrice) : '—';
     const valueStr = value > 0 ? '$' + fmtUsd(value) : '—';
     const timeCell = relTime ? `<span title="${timeStr}">${relTime}</span>` : timeStr;
+
+    let pnlStr = '—';
+    if (pnlMap.has(idx)) {
+      const pnl = pnlMap.get(idx);
+      const sign = pnl >= 0 ? '+' : '';
+      const color = pnl >= 0 ? 'var(--success)' : 'var(--error)';
+      pnlStr = `<span style="color: ${color}">${sign}$${fmtUsd(Math.abs(pnl))}</span>`;
+    }
 
     return `<tr>
       <td>${pair}</td>
@@ -176,6 +230,7 @@ export function renderOrders(result) {
       <td class="num">${filledStr}</td>
       <td class="num">${avgPriceStr}</td>
       <td class="num">${valueStr}</td>
+      <td class="num">${pnlStr}</td>
       <td>${statusBadge(status)}</td>
       <td class="num">${timeCell}</td>
     </tr>`;
