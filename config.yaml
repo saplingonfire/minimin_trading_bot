@@ -16,13 +16,13 @@ strategy:
   min_trade_usd: 25.0
   min_volume_usd: 500000
   min_price_usd: 0.10
-  min_rebalance_pct: 0.02
-  pair_cooldown_min: 30
+  min_rebalance_pct: 0.015
+  pair_cooldown_min: 15
   min_days_history: 3
-  rank_interval_min: 60
+  rank_interval_min: 30
   regime_utc_hour: 0
   use_limit_fee_optimization: true
-  max_orders_per_cycle: 2
+  max_orders_per_cycle: 3
   order_spacing_sec: 30
   db_path: ./prices.db
 
@@ -55,7 +55,7 @@ strategy:
 # -----------------------------------------------------------------------------
 execution:
   cycle_sec: 300
-  max_orders_per_cycle: 2
+  max_orders_per_cycle: 3
   order_spacing_sec: 30
   fees:
     market_bps: 10
