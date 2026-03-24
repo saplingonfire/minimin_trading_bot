@@ -16,7 +16,7 @@ strategy:
   min_price_usd: 0.10            # Minimum coin price (USD) for eligibility
   min_days_history: 3            # Minimum calendar days of price data before a pair is eligible
   min_days_momentum: 8           # Minimum daily closes required for momentum/vol calculation (r7 needs 8)
-  max_change_filter: 0.50        # Skip assets with |24h change| > this fraction (outlier filter)
+  max_change_filter: 0.30        # Skip assets with |24h change| > this fraction (outlier filter)
   bottom_trim_pct: 0.20          # Trim bottom N% of ranked universe before selecting top-N
 
   exclude_pairs: [               # Pairs excluded from the tradeable universe
@@ -29,7 +29,7 @@ strategy:
   # Momentum signal — cross-sectional ranking
   # ---------------------------------------------------------------------------
   ma_window: 20                  # BTC MA window (days) for regime filter
-  momentum_weights: [0.2, 0.3, 0.5]  # Weights for [1d, 3d, 7d] return in MomScore
+  momentum_weights: [0.3, 0.3, 0.4]  # Weights for [1d, 3d, 7d] return in MomScore
   volatility_floor: 0.01        # Minimum annualized volatility (prevents 1/vol explosion)
 
   # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ strategy:
     ma_window: 20
     prelim_mode: true
     strong_exposure: 0.80
-    soft_exposure: 0.35
+    soft_exposure: 0.50
     consecutive_below_to_off: 2
     regime_eval_hours: 3             # Re-evaluate BTC regime every N hours (24 = once/day)
     breakout_threshold_pct: 0.02     # BTC must exceed MA20 by this % to trigger fast-entry
@@ -101,7 +101,7 @@ execution:
   cycle_sec: 300                     # Main loop interval (seconds)
   max_orders_per_cycle: 3
   order_spacing_sec: 30
-  stale_order_timeout_sec: 600       # Cancel unfilled limit orders older than 10 min
+  stale_order_timeout_sec: 300       # Cancel unfilled limit orders older than 5 min
 
   # Trading fees in basis points (1 bps = 0.01%)
   fees:
