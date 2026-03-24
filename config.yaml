@@ -51,7 +51,7 @@ strategy:
   # Turnover controls
   # ---------------------------------------------------------------------------
   rank_buffer: 2                 # Held assets stay if within top N+buffer (hysteresis)
-  min_hold_hours: 4.0            # Min hours before a position can be stale-sold
+  min_hold_hours: 1.0            # Min hours before a position can be stale-sold
 
   # ---------------------------------------------------------------------------
   # Order execution — fee optimization
