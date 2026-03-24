@@ -78,6 +78,50 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .card.loading .value { color: var(--muted); }
 .card.error .value { color: var(--error); }
 
+/* --- Portfolio summary --- */
+
+.portfolio-summary {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.portfolio-summary-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* --- Ticker grid --- */
+
+.ticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.5rem;
+}
+
+.ticker-grid-item {
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.8125rem;
+}
+
+.ticker-grid-item .pair-name {
+  font-weight: 600;
+  margin-bottom: 0.15rem;
+}
+
+.ticker-grid-item .pair-price {
+  font-variant-numeric: tabular-nums;
+}
+
+.ticker-grid-item .pair-change {
+  font-size: 0.75rem;
+}
+
 /* --- Balance / Positions --- */
 
 .balance-list, .ticker-list {

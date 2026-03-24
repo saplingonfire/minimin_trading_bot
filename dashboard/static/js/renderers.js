@@ -27,6 +27,7 @@ export function renderPortfolio(balanceResult, tickerResult, ordersResult) {
     setCardError('balance', err);
     document.getElementById('portfolio-value').textContent = 'Error';
     document.getElementById('balance').textContent = '—';
+    document.getElementById('portfolio-pnl').textContent = '—';
     document.getElementById('positions-body').innerHTML = '';
     return false;
   }
@@ -47,7 +48,8 @@ export function renderPortfolio(balanceResult, tickerResult, ordersResult) {
   if (typeof wallet !== 'object' || wallet === null) {
     document.getElementById('portfolio-value').textContent = '—';
     document.getElementById('balance').textContent = '—';
-    document.getElementById('positions-body').innerHTML = '<tr><td colspan="7" class="empty">No data</td></tr>';
+    document.getElementById('portfolio-pnl').textContent = '—';
+    document.getElementById('positions-body').innerHTML = '<tr><td colspan="9" class="empty">No data</td></tr>';
     return true;
   }
   const combined = spot && margin ? { ...spot, ...margin } : wallet;
@@ -66,7 +68,7 @@ export function renderPortfolio(balanceResult, tickerResult, ordersResult) {
     if (asset === 'USD' || asset === 'USDT') {
       cashUsd += total;
       portfolioValue += total;
-      positions.push({ asset, total, free, lock, price: 1, value: total, change: null, isCash: true, unrealizedPnl: null });
+      positions.push({ asset, total, free, lock, price: 1, value: total, change: null, isCash: true, unrealizedPnl: null, avgCost: null, returnPct: null });
     } else {
       const pair = asset + '/USD';
       const row = getTickerRow(tickerData, pair);
@@ -74,11 +76,16 @@ export function renderPortfolio(balanceResult, tickerResult, ordersResult) {
       const change = row ? (Number(row.Change ?? row.change) || null) : null;
       const value = price > 0 ? total * price : 0;
       portfolioValue += value;
-      let unrealizedPnl = null;
-      if (costBasis && costBasis[asset] && costBasis[asset].qty > 0 && value > 0) {
-        unrealizedPnl = value - costBasis[asset].cost;
-      }
-      positions.push({ asset, total, free, lock, price, value, change, isCash: false, unrealizedPnl });
+
+      const basis = costBasis?.[asset];
+      const hasBasis = basis && basis.qty > 0;
+      const avgCost = hasBasis ? basis.cost / basis.qty : null;
+      const unrealizedPnl = hasBasis && value > 0 ? value - basis.cost : null;
+      const returnPct = hasBasis && basis.cost > 0 && value > 0
+        ? ((value - basis.cost) / basis.cost) * 100
+        : null;
+
+      positions.push({ asset, total, free, lock, price, value, change, isCash: false, unrealizedPnl, avgCost, returnPct });
     }
   }
 
@@ -87,9 +94,21 @@ export function renderPortfolio(balanceResult, tickerResult, ordersResult) {
   document.getElementById('portfolio-value').textContent = portfolioValue > 0 ? '$' + fmtUsd(portfolioValue) : '—';
   document.getElementById('balance').textContent = cashUsd > 0 ? '$' + fmtUsd(cashUsd) : '—';
 
+  const hasPnl = positions.some(p => p.unrealizedPnl != null);
+  const pnlEl = document.getElementById('portfolio-pnl');
+  if (hasPnl) {
+    const totalPnl = positions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0);
+    const sign = totalPnl >= 0 ? '+' : '';
+    const color = totalPnl >= 0 ? 'var(--success)' : 'var(--error)';
+    pnlEl.innerHTML = `<span style="color: ${color}">${sign}$${fmtUsd(Math.abs(totalPnl))}</span>`;
+  } else {
+    pnlEl.textContent = '—';
+  }
+
+  const COLS = 9;
   const tbody = document.getElementById('positions-body');
   if (positions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">No positions</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="${COLS}" class="empty">No positions</td></tr>`;
   } else {
     tbody.innerHTML = positions.map(p => {
       const pct = portfolioValue > 0 ? (p.value / portfolioValue * 100) : 0;
@@ -102,35 +121,74 @@ export function renderPortfolio(balanceResult, tickerResult, ordersResult) {
         const color = p.change >= 0 ? 'var(--success)' : 'var(--error)';
         changeStr = `<span style="color: ${color}">${sign}${p.change.toFixed(2)}%</span>`;
       }
+      const avgCostStr = p.isCash ? '—' : (p.avgCost != null ? '$' + fmtUsd(p.avgCost) : '—');
+
       let pnlStr = '—';
       if (p.unrealizedPnl != null) {
         const sign = p.unrealizedPnl >= 0 ? '+' : '';
         const color = p.unrealizedPnl >= 0 ? 'var(--success)' : 'var(--error)';
         pnlStr = `<span style="color: ${color}">${sign}$${fmtUsd(Math.abs(p.unrealizedPnl))}</span>`;
       }
+
+      let returnStr = '—';
+      if (p.returnPct != null) {
+        const sign = p.returnPct >= 0 ? '+' : '';
+        const color = p.returnPct >= 0 ? 'var(--success)' : 'var(--error)';
+        returnStr = `<span style="color: ${color}">${sign}${p.returnPct.toFixed(2)}%</span>`;
+      }
+
       const pctStr = `<span class="pct-bar" style="width: ${barWidth}%"></span>${pct.toFixed(1)}%`;
       const qtyTitle = p.lock > 0 ? `Free: ${fmtQty(p.free)}, Locked: ${fmtQty(p.lock)}` : '';
       return `<tr>
         <td class="asset-name">${p.asset}</td>
         <td class="num" title="${qtyTitle}">${p.isCash ? fmtUsd(p.total) : fmtQty(p.total)}</td>
         <td class="num">${priceStr}</td>
+        <td class="num">${avgCostStr}</td>
         <td class="num">${valueStr}</td>
         <td class="num">${changeStr}</td>
         <td class="num">${pnlStr}</td>
+        <td class="num">${returnStr}</td>
         <td class="num pct-col">${pctStr}</td>
       </tr>`;
     }).join('');
   }
 
-  const dataPayload = tickerData.Data && typeof tickerData.Data === 'object' ? tickerData.Data : tickerData;
-  const btcTicker = dataPayload['BTC/USD'] ?? dataPayload.BTCUSD ?? tickerData['BTC/USD'] ?? tickerData.BTCUSD ?? tickerData;
-  const btcPrice = btcTicker?.LastPrice ?? btcTicker?.lastPrice ?? btcTicker?.Last;
-  const btcChange = btcTicker?.Change ?? btcTicker?.change;
-  let tickerHtml = btcPrice != null ? 'USD ' + Number(btcPrice).toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
-  if (btcChange != null && !isNaN(btcChange)) tickerHtml += ` <span style="color: var(--muted);">(${Number(btcChange) >= 0 ? '+' : ''}${Number(btcChange).toFixed(2)}%)</span>`;
-  document.getElementById('ticker').innerHTML = tickerHtml;
-  document.getElementById('ticker-err').hidden = true;
+  renderTickerGrid(tickerData);
   return true;
+}
+
+function renderTickerGrid(tickerData) {
+  const grid = document.getElementById('ticker-grid');
+  const errEl = document.getElementById('ticker-err');
+  if (!grid) return;
+  errEl.hidden = true;
+
+  const payload = tickerData.Data && typeof tickerData.Data === 'object'
+    ? tickerData.Data : tickerData;
+  const pairs = Object.entries(payload)
+    .filter(([, v]) => v && typeof v === 'object' && (v.LastPrice ?? v.lastPrice ?? v.Last) != null)
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  if (pairs.length === 0) {
+    grid.innerHTML = '<span class="empty">No ticker data</span>';
+    return;
+  }
+
+  grid.innerHTML = pairs.map(([pair, row]) => {
+    const price = Number(row.LastPrice ?? row.lastPrice ?? row.Last ?? 0);
+    const change = Number(row.Change ?? row.change);
+    const hasChange = !isNaN(change);
+    const changeColor = change >= 0 ? 'var(--success)' : 'var(--error)';
+    const changeSign = change >= 0 ? '+' : '';
+    const changeHtml = hasChange
+      ? `<div class="pair-change" style="color: ${changeColor}">${changeSign}${change.toFixed(2)}%</div>`
+      : '';
+    return `<div class="ticker-grid-item">
+      <div class="pair-name">${pair}</div>
+      <div class="pair-price">$${fmtUsd(price)}</div>
+      ${changeHtml}
+    </div>`;
+  }).join('');
 }
 
 export function renderPendingCount(result) {

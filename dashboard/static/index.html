@@ -30,14 +30,18 @@
 
   <div class="card" id="card-balance" style="margin-bottom: 1rem;">
     <h2>Portfolio</h2>
-    <div style="display: flex; gap: 2rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+    <div class="portfolio-summary">
       <div>
-        <div style="color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;">Total Value</div>
+        <div class="portfolio-summary-label">Total Value</div>
         <div id="portfolio-value" class="value">—</div>
       </div>
       <div>
-        <div style="color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;">Cash (USD)</div>
+        <div class="portfolio-summary-label">Cash (USD)</div>
         <div id="balance" class="value">—</div>
+      </div>
+      <div>
+        <div class="portfolio-summary-label">Unrealized P&amp;L</div>
+        <div id="portfolio-pnl" class="value">—</div>
       </div>
     </div>
     <table class="positions-table">
@@ -46,9 +50,11 @@
           <th>Asset</th>
           <th class="num">Quantity</th>
           <th class="num">Price (USD)</th>
+          <th class="num">Avg Cost</th>
           <th class="num">Value (USD)</th>
           <th class="num">24h Chg</th>
           <th class="num">Unrl P&amp;L</th>
+          <th class="num">Return %</th>
           <th class="num pct-col">Allocation</th>
         </tr>
       </thead>
@@ -68,9 +74,9 @@
     <div id="pv-chart-err" class="err-msg" hidden></div>
   </div>
 
-  <div class="card" style="margin-bottom: 1rem;">
-    <h2>Ticker (BTC/USD)</h2>
-    <div id="ticker" class="value">—</div>
+  <div class="card" id="card-ticker" style="margin-bottom: 1rem;">
+    <h2>Market</h2>
+    <div class="ticker-grid" id="ticker-grid"></div>
     <div id="ticker-err" class="err-msg" hidden></div>
   </div>
 
