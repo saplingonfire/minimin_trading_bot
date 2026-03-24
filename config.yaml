@@ -38,7 +38,7 @@ strategy:
   # --- Risk (hybrid + throttled): kill-switch and error halt ---
   risk:
     max_consecutive_errors: 5
-    btc_daily_move_kill: 0.40
+    btc_daily_move_kill: 0.15
 
   # --- hybrid_trend_cross_sectional_throttled only (prelim soft exposure) ---
   regime:
@@ -47,10 +47,11 @@ strategy:
     strong_exposure: 0.80
     soft_exposure: 0.35
     consecutive_below_to_off: 2
-    regime_eval_hours: 6          # Re-evaluate BTC regime every N hours (24 = once/day)
+    regime_eval_hours: 3          # Re-evaluate BTC regime every N hours (24 = once/day)
     breakout_threshold_pct: 0.02  # BTC must exceed MA20 by this % to trigger fast-entry
     breakout_exposure: 0.35       # Exposure level on breakout (soft entry)
     breakout_cooldown_min: 60     # Min minutes between breakout triggers
+    breakdown_threshold_pct: 0.02 # BTC falls this % below MA20 → immediate risk_off
 
 # -----------------------------------------------------------------------------
 # Runner / execution (tick interval, order pacing — stay under Roostoo rate limits)

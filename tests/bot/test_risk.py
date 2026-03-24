@@ -17,21 +17,23 @@ def test_drawdown_normal_exposure_unchanged() -> None:
     assert force is False
 
 
-def test_drawdown_soft_05_reduces_exposure() -> None:
-    # -5% drawdown -> 0.70
-    exposure, force = get_drawdown_exposure(95, 100, 0.85)
-    assert exposure == 0.70
+def test_drawdown_soft_03_reduces_exposure() -> None:
+    # -3% drawdown -> 0.60
+    exposure, force = get_drawdown_exposure(97, 100, 0.85)
+    assert exposure == 0.60
     assert force is False
 
 
-def test_drawdown_soft_10_half_exposure() -> None:
-    exposure, force = get_drawdown_exposure(89, 100, 0.85)
-    assert exposure == 0.50
+def test_drawdown_soft_07_reduces_more() -> None:
+    # -7% drawdown -> 0.30
+    exposure, force = get_drawdown_exposure(93, 100, 0.85)
+    assert exposure == 0.30
     assert force is False
 
 
-def test_drawdown_hard_15_force_risk_off() -> None:
-    exposure, force = get_drawdown_exposure(84, 100, 0.85)
+def test_drawdown_hard_10_force_risk_off() -> None:
+    # -10% drawdown -> force risk-off
+    exposure, force = get_drawdown_exposure(90, 100, 0.85)
     assert exposure == 0.0
     assert force is True
 

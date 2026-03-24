@@ -40,8 +40,8 @@ strategy:
   risk:
     # Halt bot after this many consecutive API errors.
     max_consecutive_errors: 5
-    # Force risk-off (go to cash) if |BTC 24h change| > this fraction (e.g. 0.40 = 40%).
-    btc_daily_move_kill: 0.40
+    # Force risk-off (go to cash) if |BTC 24h change| > this fraction (e.g. 0.15 = 15%).
+    btc_daily_move_kill: 0.15
 
 # Execution and tick pacing (maps into bot tick_seconds, order spacing).
 execution:
@@ -60,12 +60,12 @@ execution:
 
 # Global risk / kill-switch settings (used by runner).
 risk:
-  # Drawdown from peak at which to reduce exposure (e.g. -0.05 = 5%).
-  max_drawdown_soft: -0.05
+  # Drawdown from peak at which to reduce exposure (e.g. -0.03 = 3%).
+  max_drawdown_soft: -0.03
   # Drawdown from peak at which to force full cash.
-  max_drawdown_hard: -0.15
-  # Force risk-off if |BTC 24h change| exceeds this (e.g. 0.40 = 40%).
-  btc_daily_move_kill: 0.40
+  max_drawdown_hard: -0.10
+  # Force risk-off if |BTC 24h change| exceeds this (e.g. 0.15 = 15%).
+  btc_daily_move_kill: 0.15
   # Halt bot after this many consecutive API errors.
   max_consecutive_errors: 5
 

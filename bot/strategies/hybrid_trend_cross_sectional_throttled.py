@@ -30,6 +30,7 @@ def _default_regime_config(config: dict[str, Any]) -> dict[str, Any]:
         "breakout_threshold_pct": float(r.get("breakout_threshold_pct", 0.02)),
         "breakout_exposure": float(r.get("breakout_exposure", 0.35)),
         "breakout_cooldown_min": int(r.get("breakout_cooldown_min", 60)),
+        "breakdown_threshold_pct": float(r.get("breakdown_threshold_pct", 0.02)),
     }
 
 
@@ -156,7 +157,46 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
             return True
         return False
 
+    def _check_breakdown(self, context: TradingContext) -> bool:
+        """If risk_on and live BTC price falls significantly below MA20, immediately go risk_off.
+
+        Mirror of _check_breakout: provides fast downside exit without waiting for the
+        next scheduled regime evaluation.
+        """
+        if self._regime == REGIME_RISK_OFF:
+            return False
+        threshold = self._regime_config["breakdown_threshold_pct"]
+        if threshold <= 0:
+            return False
+        if not context.price_store:
+            return False
+        ma_window = self._regime_config["ma_window"]
+        btc_closes = context.price_store.get_daily_closes(BTC_PAIR, ma_window + 2)
+        if len(btc_closes) < ma_window:
+            return False
+        ma_vals = sma(btc_closes, ma_window)
+        if not ma_vals:
+            return False
+        last_ma = ma_vals[-1]
+        btc_price = get_price(context.ticker, BTC_PAIR)
+        if btc_price <= 0:
+            return False
+        if btc_price < last_ma * (1 - threshold):
+            prev_regime = self._regime
+            self._regime = REGIME_RISK_OFF
+            self._effective_exposure = 0.0
+            self._target_weights = {}
+            logger.warning(
+                "breakdown: BTC %.2f < MA20 %.2f * %.3f, regime %s -> risk_off (immediate liquidation)",
+                btc_price, last_ma, 1 - threshold, prev_regime,
+            )
+            return True
+        return False
+
     def _pre_rerank(self, context: TradingContext, now: int) -> bool:
+        breakdown_triggered = self._check_breakdown(context)
+        if breakdown_triggered:
+            return True
         breakout_triggered = self._check_breakout(context)
         if breakout_triggered:
             return True
