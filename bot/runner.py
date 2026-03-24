@@ -87,6 +87,8 @@ def run(settings: BotSettings) -> None:
         order_spacing_sec=order_spacing_sec if isinstance(order_spacing_sec, (int, float)) else None,
         trades_log_path=settings.trades_log_path,
         stale_order_timeout_sec=settings.stale_order_timeout_sec,
+        retry_delays=settings.retry_delays,
+        retry_statuses=settings.retry_statuses,
     )
 
     strategy_cls = STRATEGIES[strategy_name]
@@ -105,8 +107,8 @@ def run(settings: BotSettings) -> None:
             or "prices.db"
         )
         price_store = PriceStore(db_path)
-        if price_store.count_days_with_data("BTC/USD") < 20:
-            warmup_from_binance_klines(price_store, limit=30)
+        if price_store.count_days_with_data("BTC/USD") < settings.warmup_min_btc_days:
+            warmup_from_binance_klines(price_store, limit=settings.warmup_backfill_days)
 
     signal.signal(signal.SIGTERM, _shutdown_handler)
     signal.signal(signal.SIGINT, _shutdown_handler)
@@ -119,7 +121,8 @@ def run(settings: BotSettings) -> None:
     risk_config = (settings.strategy_params or {}).get("risk") or {}
     max_errors = risk_config.get("max_consecutive_errors", 5)
     max_db_errors = risk_config.get("max_consecutive_db_errors", 5)
-    btc_move_kill = risk_config.get("btc_daily_move_kill", 0.40)
+    max_drift_ms = risk_config.get("max_drift_ms", 60_000)
+    btc_move_kill = risk_config.get("btc_daily_move_kill", 0.15)
     try:
         while not _shutdown_requested:
             tick_start = time.perf_counter()
@@ -146,6 +149,7 @@ def run(settings: BotSettings) -> None:
                     server_time_ms_fallback,
                     None,
                     max_consecutive_errors=max_errors,
+                    max_drift_ms=max_drift_ms,
                     btc_daily_move_kill=btc_move_kill,
                 )
                 if halt:
@@ -166,6 +170,7 @@ def run(settings: BotSettings) -> None:
                 context.server_time_ms,
                 btc_change,
                 max_consecutive_errors=max_errors,
+                max_drift_ms=max_drift_ms,
                 btc_daily_move_kill=btc_move_kill,
             )
             if halt:

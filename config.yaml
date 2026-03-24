@@ -2,86 +2,137 @@
 # Set BOT_STRATEGY in .env (e.g. hybrid_trend_cross_sectional or hybrid_trend_cross_sectional_throttled).
 # Secrets (API keys) stay in .env only. Tuned for single-instance EC2, API rate limits, 24/7 crypto.
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Strategy params (merged into strategy_params for the strategy named in BOT_STRATEGY)
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 strategy:
-  # --- hybrid_trend_cross_sectional + hybrid_trend_cross_sectional_throttled (shared) ---
-  N: 5
-  ma_window: 20
-  momentum_weights: [0.2, 0.3, 0.5]
-  target_exposure: 0.80
-  max_weight_per_coin: 0.20
-  min_trade_usd: 25.0
-  min_volume_usd: 500000
-  min_price_usd: 0.10
-  min_rebalance_pct: 0.015
-  pair_cooldown_min: 15
-  min_days_history: 3
-  rank_interval_min: 30
-  rank_buffer: 2              # Held assets stay if within top N+buffer (hysteresis)
-  min_hold_hours: 4.0         # Min hours before a position can be stale-sold
-  regime_utc_hour: 0
-  use_limit_fee_optimization: true
+
+  # ---------------------------------------------------------------------------
+  # Universe selection — which pairs are eligible for ranking
+  # ---------------------------------------------------------------------------
+  N: 5                           # Number of top momentum coins to hold
+  min_volume_usd: 500000         # Minimum 24h USD volume for eligibility
+  min_price_usd: 0.10            # Minimum coin price (USD) for eligibility
+  min_days_history: 3            # Minimum calendar days of price data before a pair is eligible
+  min_days_momentum: 8           # Minimum daily closes required for momentum/vol calculation (r7 needs 8)
+  max_change_filter: 0.50        # Skip assets with |24h change| > this fraction (outlier filter)
+  bottom_trim_pct: 0.20          # Trim bottom N% of ranked universe before selecting top-N
+
+  exclude_pairs: [               # Pairs excluded from the tradeable universe
+    "PAXGUSDT",                  # Gold peg: Uncorrelated to BTC MA20 regime
+    "SUSDT",                     # Stablecoin: Zero-volatility breaks inverse-vol weighting
+    "1000CHEEMSUSDT",            # Micro-cap meme: Extreme bid-ask spread risk on mock exchange
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Momentum signal — cross-sectional ranking
+  # ---------------------------------------------------------------------------
+  ma_window: 20                  # BTC MA window (days) for regime filter
+  momentum_weights: [0.2, 0.3, 0.5]  # Weights for [1d, 3d, 7d] return in MomScore
+  volatility_floor: 0.01        # Minimum annualized volatility (prevents 1/vol explosion)
+
+  # ---------------------------------------------------------------------------
+  # Position sizing and rebalancing
+  # ---------------------------------------------------------------------------
+  target_exposure: 0.80          # Fraction of portfolio in crypto when risk-on
+  max_weight_per_coin: 0.20      # Maximum weight per single coin (cap concentration)
+  min_trade_usd: 25.0            # Minimum notional (USD) per trade; smaller deltas are skipped
+  min_rebalance_pct: 0.015       # Skip rebalance if delta < this fraction of target allocation
+
+  # ---------------------------------------------------------------------------
+  # Timing and pacing
+  # ---------------------------------------------------------------------------
+  rank_interval_min: 30          # Minutes between cross-sectional re-ranks
+  pair_cooldown_min: 15          # Minutes to suppress re-trading a pair after a trade
+  regime_utc_hour: 0             # UTC hour for regime evaluation (base strategy daily eval)
+
+  # ---------------------------------------------------------------------------
+  # Turnover controls
+  # ---------------------------------------------------------------------------
+  rank_buffer: 2                 # Held assets stay if within top N+buffer (hysteresis)
+  min_hold_hours: 4.0            # Min hours before a position can be stale-sold
+
+  # ---------------------------------------------------------------------------
+  # Order execution — fee optimization
+  # ---------------------------------------------------------------------------
+  use_limit_fee_optimization: true   # Use aggressive LIMIT orders for 0.05% fee tier
+  limit_price_offset: 0.001      # Limit price offset from bid/ask (e.g. 0.001 = 0.1%)
   max_orders_per_cycle: 3
   order_spacing_sec: 30
   db_path: ./prices.db
 
-  # Optional: exclude pairs from the tradeable universe (e.g. memecoins or illiquid)
-  exclude_pairs: [
-    "PAXGUSDT",  # Gold peg: Uncorrelated to BTC MA20 regime
-    "SUSDT",     # Stablecoin: Zero-volatility breaks inverse-vol weighting
-    "1000CHEEMSUSDT", # Micro-cap meme: Extreme bid-ask spread risk on mock exchange
-  ]
-
-  # --- Risk (hybrid + throttled): kill-switch and error halt ---
+  # ---------------------------------------------------------------------------
+  # Risk: kill-switch, drawdown, and error halt
+  # ---------------------------------------------------------------------------
   risk:
-    max_consecutive_errors: 5
-    btc_daily_move_kill: 0.15
+    max_consecutive_errors: 5    # Halt bot after this many consecutive API errors
+    max_consecutive_db_errors: 5 # Halt bot after this many consecutive DB errors
+    max_drift_ms: 60000          # Max clock drift (ms) before kill switch halts
+    btc_daily_move_kill: 0.15    # Force risk-off if |BTC 24h change| > this fraction
 
-  # --- hybrid_trend_cross_sectional_throttled only (prelim soft exposure) ---
+    # Drawdown ladder: reduce exposure as portfolio draws down from peak
+    drawdown_soft_1: -0.03       # First tier: reduce exposure at this drawdown
+    drawdown_soft_1_exposure: 0.60   # Target exposure at first tier
+    drawdown_soft_2: -0.07       # Second tier: further reduce at this drawdown
+    drawdown_soft_2_exposure: 0.30   # Target exposure at second tier
+    drawdown_hard: -0.10         # Hard stop: force full cash at this drawdown
+    recovery_ratio: 0.95         # Restore normal exposure when portfolio >= this fraction of peak
+
+  # ---------------------------------------------------------------------------
+  # Throttled variant only: three-tier regime with sub-daily eval and breakout/breakdown
+  # ---------------------------------------------------------------------------
   regime:
     ma_window: 20
     prelim_mode: true
     strong_exposure: 0.80
     soft_exposure: 0.35
     consecutive_below_to_off: 2
-    regime_eval_hours: 3          # Re-evaluate BTC regime every N hours (24 = once/day)
-    breakout_threshold_pct: 0.02  # BTC must exceed MA20 by this % to trigger fast-entry
-    breakout_exposure: 0.35       # Exposure level on breakout (soft entry)
-    breakout_cooldown_min: 60     # Min minutes between breakout triggers
-    breakdown_threshold_pct: 0.02 # BTC falls this % below MA20 → immediate risk_off
+    regime_eval_hours: 3             # Re-evaluate BTC regime every N hours (24 = once/day)
+    breakout_threshold_pct: 0.02     # BTC must exceed MA20 by this % to trigger fast-entry
+    breakout_exposure: 0.35          # Exposure level on breakout (soft entry)
+    breakout_cooldown_min: 60        # Min minutes between breakout triggers
+    breakdown_threshold_pct: 0.02    # BTC falls this % below MA20 → immediate risk_off
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Runner / execution (tick interval, order pacing — stay under Roostoo rate limits)
-# -----------------------------------------------------------------------------
+# =============================================================================
 execution:
-  cycle_sec: 300
+  cycle_sec: 300                     # Main loop interval (seconds)
   max_orders_per_cycle: 3
   order_spacing_sec: 30
-  stale_order_timeout_sec: 600  # Cancel unfilled limit orders older than 10 min
-  fees:
-    market_bps: 10
-    limit_bps: 5
+  stale_order_timeout_sec: 600       # Cancel unfilled limit orders older than 10 min
 
-# -----------------------------------------------------------------------------
+  # Trading fees in basis points (1 bps = 0.01%)
+  fees:
+    market_bps: 10                   # 0.10% per market order
+    limit_bps: 5                     # 0.05% per limit order
+
+  # API retry policy
+  retry_delays: [1.0, 2.0, 4.0]     # Backoff delays (seconds) between retries
+  retry_statuses: [429, 500, 502, 503]  # HTTP statuses that trigger a retry
+
+  # Warmup (Binance price store backfill on startup)
+  warmup_min_btc_days: 20            # Skip warmup if BTC has >= this many days of data
+  warmup_backfill_days: 30           # Number of days to backfill from Binance klines
+
+# =============================================================================
 # Data paths (price store, logs)
-# -----------------------------------------------------------------------------
+# =============================================================================
 data:
   db_path: ./prices.db
   log_dir: ./logs/
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Dashboard (initial balance for PnL chart)
-# -----------------------------------------------------------------------------
+# =============================================================================
 dashboard:
   initial_balance_test: 50000
   initial_balance_live: 1000000
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Backtest (scripts/run_backtest.py). Align with competition window / account size.
-# -----------------------------------------------------------------------------
+# =============================================================================
 backtest:
   start_date: "2025-03-18"
   end_date: "2026-03-18"

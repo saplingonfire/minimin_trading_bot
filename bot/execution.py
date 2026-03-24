@@ -13,9 +13,8 @@ from bot.base import CancelOrderSignal, PlaceOrderSignal, Signal
 
 logger = logging.getLogger(__name__)
 
-RETRY_STATUSES = (429, 500, 502, 503)
-RETRY_DELAYS = (1.0, 2.0, 4.0)
-MAX_RETRIES = 3
+DEFAULT_RETRY_STATUSES = (429, 500, 502, 503)
+DEFAULT_RETRY_DELAYS = (1.0, 2.0, 4.0)
 
 
 def _normalize_pair(pair: str) -> str:
@@ -83,6 +82,8 @@ class Executor:
         order_spacing_sec: float | None = None,
         trades_log_path: str | None = None,
         stale_order_timeout_sec: float | None = None,
+        retry_delays: tuple[float, ...] | list[float] | None = None,
+        retry_statuses: tuple[int, ...] | list[int] | None = None,
     ) -> None:
         self._client = client
         self._dry_run = dry_run
@@ -92,6 +93,8 @@ class Executor:
         self._order_spacing_sec = order_spacing_sec
         self._trades_log_path = trades_log_path
         self._stale_order_timeout_sec = stale_order_timeout_sec
+        self._retry_delays = tuple(retry_delays) if retry_delays else DEFAULT_RETRY_DELAYS
+        self._retry_statuses = tuple(retry_statuses) if retry_statuses else DEFAULT_RETRY_STATUSES
 
     def _append_trade(self, record: dict[str, Any]) -> None:
         """Append one JSONL line to trades_log_path when set."""
@@ -270,13 +273,14 @@ class Executor:
     ) -> dict[str, Any]:
         assert callable(fn)
         last_err: Exception | None = None
-        for i, delay in enumerate(RETRY_DELAYS):
+        max_retries = len(self._retry_delays)
+        for i, delay in enumerate(self._retry_delays):
             try:
                 return fn()
             except RoostooAPIError as e:
                 last_err = e
                 status = e.status_code
-                if status in RETRY_STATUSES and i < MAX_RETRIES - 1:
+                if status in self._retry_statuses and i < max_retries - 1:
                     logger.warning(
                         "retry %s after %s status=%s message=%s",
                         action,

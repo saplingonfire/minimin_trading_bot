@@ -1,85 +1,138 @@
-# Example config for hybrid_trend_cross_sectional strategy.
-# Copy to config.yaml and set BOT_STRATEGY=hybrid_trend_cross_sectional.
+# Example config for hybrid_trend_cross_sectional / hybrid_trend_cross_sectional_throttled.
+# Copy to config.yaml and set BOT_STRATEGY in .env.
 # Secrets: use ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY (or ROOSTOO_TEST_*).
 
+# =============================================================================
+# Strategy params (merged into strategy_params for the strategy named in BOT_STRATEGY)
+# =============================================================================
+
 strategy:
-  # Number of top momentum coins to hold (inverse-vol weighted).
-  N: 5
-  # BTC moving-average window (days) for regime filter; price > MA = risk-on.
-  ma_window: 20
-  # Weights for composite momentum: [1d, 3d, 7d] return; higher weight on 7d.
-  momentum_weights: [0.2, 0.3, 0.5]
-  # Target fraction of portfolio in crypto when risk-on (rest in cash).
-  target_exposure: 0.85
-  # Maximum weight per single coin (cap concentration).
-  max_weight_per_coin: 0.20
-  # Minimum notional (USD) per trade; smaller deltas are skipped.
-  min_trade_usd: 50.0
-  # Minimum rebalance delta as fraction of target allocation (e.g. 0.02 = 2%).
-  # Prevents churn from noise-level deviations that exceed min_trade_usd but are
-  # too small relative to position size to justify the round-trip cost.
-  min_rebalance_pct: 0.02
-  # Per-pair cooldown in minutes after a trade before the same pair can be traded again.
-  # Prevents buy-then-sell whipsaw across consecutive tick cycles.
-  pair_cooldown_min: 30
-  # Minimum 24h USD volume for a pair to be eligible for ranking.
-  min_volume_usd: 500000
-  # Minimum coin price (USD) to be eligible; filters out micro-priced tokens.
-  min_price_usd: 0.01
-  # Minutes between cross-sectional re-ranks (throttles order flow).
-  rank_interval_min: 60
-  # UTC hour (0–23) at which regime (BTC vs MA) is re-evaluated once per day.
-  regime_utc_hour: 0
-  # Use aggressive LIMIT orders priced above MaxBid (buys) / below MinAsk (sells) to
-  # qualify for the 0.05% limit fee tier instead of the 0.10% market fee. Orders still
-  # fill immediately. Falls back to MARKET when bid/ask data is unavailable.
-  use_limit_fee_optimization: true
-  # Optional: pairs to exclude from the tradeable universe (e.g. memecoins). Env: BOT_EXCLUDE_PAIRS (comma-separated).
+
+  # ---------------------------------------------------------------------------
+  # Universe selection — which pairs are eligible for ranking
+  # ---------------------------------------------------------------------------
+  N: 5                           # Number of top momentum coins to hold
+  min_volume_usd: 500000         # Minimum 24h USD volume for eligibility
+  min_price_usd: 0.01            # Minimum coin price (USD) for eligibility
+  min_days_history: 3            # Minimum calendar days of price data before a pair is eligible
+  min_days_momentum: 8           # Minimum daily closes for momentum/vol (r7 needs 8)
+  max_change_filter: 0.50        # Skip assets with |24h change| > this fraction (outlier filter)
+  bottom_trim_pct: 0.20          # Trim bottom N% of ranked universe before selecting top-N
+
+  # Optional: exclude pairs from the tradeable universe (e.g. memecoins, stablecoins)
   # exclude_pairs: ["TRUMP/USD", "PENGU/USD"]
-  # Kill-switch / risk-off triggers (passed to runner where applicable).
-  risk:
-    # Halt bot after this many consecutive API errors.
-    max_consecutive_errors: 5
-    # Force risk-off (go to cash) if |BTC 24h change| > this fraction (e.g. 0.15 = 15%).
-    btc_daily_move_kill: 0.15
 
-# Execution and tick pacing (maps into bot tick_seconds, order spacing).
-execution:
-  # Seconds between main bot ticks (how often strategy.next() runs).
-  cycle_sec: 300
-  # Minutes between re-ranks; can mirror strategy.rank_interval_min.
-  rank_interval_min: 60
-  # Max market orders per tick (keeps under API rate limits).
+  # ---------------------------------------------------------------------------
+  # Momentum signal — cross-sectional ranking
+  # ---------------------------------------------------------------------------
+  ma_window: 20                  # BTC MA window (days) for regime filter
+  momentum_weights: [0.2, 0.3, 0.5]  # Weights for [1d, 3d, 7d] return in MomScore
+  volatility_floor: 0.01        # Minimum annualized volatility (prevents 1/vol explosion)
+
+  # ---------------------------------------------------------------------------
+  # Position sizing and rebalancing
+  # ---------------------------------------------------------------------------
+  target_exposure: 0.85          # Fraction of portfolio in crypto when risk-on
+  max_weight_per_coin: 0.20      # Maximum weight per single coin (cap concentration)
+  min_trade_usd: 50.0            # Minimum notional (USD) per trade; smaller deltas are skipped
+  min_rebalance_pct: 0.02        # Skip rebalance if delta < this fraction of target allocation
+
+  # ---------------------------------------------------------------------------
+  # Timing and pacing
+  # ---------------------------------------------------------------------------
+  rank_interval_min: 60          # Minutes between cross-sectional re-ranks
+  pair_cooldown_min: 30          # Minutes to suppress re-trading a pair after a trade
+  regime_utc_hour: 0             # UTC hour for regime evaluation (base strategy daily eval)
+
+  # ---------------------------------------------------------------------------
+  # Turnover controls
+  # ---------------------------------------------------------------------------
+  rank_buffer: 2                 # Held assets stay if within top N+buffer (hysteresis)
+  min_hold_hours: 4.0            # Min hours before a position can be stale-sold
+
+  # ---------------------------------------------------------------------------
+  # Order execution — fee optimization
+  # ---------------------------------------------------------------------------
+  use_limit_fee_optimization: true   # Use aggressive LIMIT orders for 0.05% fee tier
+  limit_price_offset: 0.001      # Limit price offset from bid/ask (e.g. 0.001 = 0.1%)
   max_orders_per_cycle: 2
-  # Seconds to wait between placing orders within a cycle.
   order_spacing_sec: 65
-  # Trading fees in basis points (1 bps = 0.01%). Used for dead-zone filter and buy qty adjustment.
+  db_path: ./prices.db
+
+  # ---------------------------------------------------------------------------
+  # Risk: kill-switch, drawdown, and error halt
+  # ---------------------------------------------------------------------------
+  risk:
+    max_consecutive_errors: 5    # Halt bot after this many consecutive API errors
+    max_consecutive_db_errors: 5 # Halt bot after this many consecutive DB errors
+    max_drift_ms: 60000          # Max clock drift (ms) before kill switch halts
+    btc_daily_move_kill: 0.15    # Force risk-off if |BTC 24h change| > this fraction
+
+    # Drawdown ladder: reduce exposure as portfolio draws down from peak
+    drawdown_soft_1: -0.03       # First tier: reduce exposure at this drawdown
+    drawdown_soft_1_exposure: 0.60   # Target exposure at first tier
+    drawdown_soft_2: -0.07       # Second tier: further reduce at this drawdown
+    drawdown_soft_2_exposure: 0.30   # Target exposure at second tier
+    drawdown_hard: -0.10         # Hard stop: force full cash at this drawdown
+    recovery_ratio: 0.95         # Restore normal exposure when portfolio >= this fraction of peak
+
+  # ---------------------------------------------------------------------------
+  # Throttled variant only: three-tier regime with sub-daily eval and breakout/breakdown
+  # ---------------------------------------------------------------------------
+  regime:
+    ma_window: 20
+    prelim_mode: true
+    strong_exposure: 0.80
+    soft_exposure: 0.35
+    consecutive_below_to_off: 2
+    regime_eval_hours: 3             # Re-evaluate BTC regime every N hours (24 = once/day)
+    breakout_threshold_pct: 0.02     # BTC must exceed MA20 by this % to trigger fast-entry
+    breakout_exposure: 0.35          # Exposure level on breakout (soft entry)
+    breakout_cooldown_min: 60        # Min minutes between breakout triggers
+    breakdown_threshold_pct: 0.02    # BTC falls this % below MA20 → immediate risk_off
+
+# =============================================================================
+# Runner / execution (tick interval, order pacing — stay under Roostoo rate limits)
+# =============================================================================
+execution:
+  cycle_sec: 300                     # Main loop interval (seconds)
+  max_orders_per_cycle: 2
+  order_spacing_sec: 65
+  stale_order_timeout_sec: 600       # Cancel unfilled limit orders older than 10 min
+
+  # Trading fees in basis points (1 bps = 0.01%)
   fees:
-    market_bps: 10   # 0.1% per market order
-    limit_bps: 5     # 0.05% per limit order
+    market_bps: 10                   # 0.10% per market order
+    limit_bps: 5                     # 0.05% per limit order
 
-# Global risk / kill-switch settings (used by runner).
-risk:
-  # Drawdown from peak at which to reduce exposure (e.g. -0.03 = 3%).
-  max_drawdown_soft: -0.03
-  # Drawdown from peak at which to force full cash.
-  max_drawdown_hard: -0.10
-  # Force risk-off if |BTC 24h change| exceeds this (e.g. 0.15 = 15%).
-  btc_daily_move_kill: 0.15
-  # Halt bot after this many consecutive API errors.
-  max_consecutive_errors: 5
+  # API retry policy
+  retry_delays: [1.0, 2.0, 4.0]     # Backoff delays (seconds) between retries
+  retry_statuses: [429, 500, 502, 503]  # HTTP statuses that trigger a retry
 
-# Dashboard (initial balance for PnL chart on the portfolio value time-series).
+  # Warmup (Binance price store backfill on startup)
+  warmup_min_btc_days: 20            # Skip warmup if BTC has >= this many days of data
+  warmup_backfill_days: 30           # Number of days to backfill from Binance klines
+
+# =============================================================================
+# Data paths (price store, logs)
+# =============================================================================
+data:
+  db_path: ./prices.db
+  warmup_source: binance
+  log_dir: ./logs/
+
+# =============================================================================
+# Dashboard (initial balance for PnL chart)
+# =============================================================================
 dashboard:
-  # Starting USD balance for test and live accounts (used to compute PnL %).
   initial_balance_test: 50000
   initial_balance_live: 1000000
 
-# Data and persistence.
-data:
-  # SQLite path for price store (ticker snapshots for regime + momentum).
-  db_path: ./prices.db
-  # Optional warmup source for initial BTC history (e.g. binance).
-  warmup_source: binance
-  # Directory for default trade/API JSONL logs when BOT_TRADES_LOG / BOT_ROOSTOO_API_LOG are unset.
-  log_dir: ./logs/
+# =============================================================================
+# Backtest (scripts/run_backtest.py). Align with competition window / account size.
+# =============================================================================
+backtest:
+  start_date: "2025-03-18"
+  end_date: "2026-03-18"
+  initial_balance: 50000
+  data_dir: "./data/binance"

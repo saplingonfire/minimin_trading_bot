@@ -27,6 +27,10 @@ class BotSettings:
     max_orders_per_cycle: int | None = None
     order_spacing_sec: float | None = None
     stale_order_timeout_sec: float | None = None
+    retry_delays: tuple[float, ...] | None = None
+    retry_statuses: tuple[int, ...] | None = None
+    warmup_min_btc_days: int = 20
+    warmup_backfill_days: int = 30
     # Log files (append-only; bot only); defaults match test account when unset in load_settings
     trades_log_path: str = "trades-test.log"
     roostoo_api_log_path: str = "roostoo-api-test.log"
@@ -198,10 +202,18 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
 
     stale_order_timeout_sec = overrides.get("stale_order_timeout_sec")
     if stale_order_timeout_sec is None:
-        execution_yaml = yaml_config.get("execution") or {}
-        raw_stale = execution_yaml.get("stale_order_timeout_sec")
+        execution_yaml_2 = yaml_config.get("execution") or {}
+        raw_stale = execution_yaml_2.get("stale_order_timeout_sec")
         if raw_stale is not None:
             stale_order_timeout_sec = float(raw_stale)
+
+    execution_yaml_full = yaml_config.get("execution") or {}
+    raw_retry_delays = execution_yaml_full.get("retry_delays")
+    retry_delays = tuple(float(d) for d in raw_retry_delays) if raw_retry_delays else None
+    raw_retry_statuses = execution_yaml_full.get("retry_statuses")
+    retry_statuses = tuple(int(s) for s in raw_retry_statuses) if raw_retry_statuses else None
+    warmup_min_btc_days = int(execution_yaml_full.get("warmup_min_btc_days", 20))
+    warmup_backfill_days = int(execution_yaml_full.get("warmup_backfill_days", 30))
 
     if not api_key or not secret_key:
         which = "live (ROOSTOO_API_KEY, ROOSTOO_SECRET_KEY)" if live else "test (ROOSTOO_TEST_API_KEY, ROOSTOO_TEST_SECRET_KEY)"
@@ -238,6 +250,10 @@ def load_settings(cli_overrides: dict[str, Any] | None = None) -> BotSettings:
         max_orders_per_cycle=max_orders_per_cycle,
         order_spacing_sec=order_spacing_sec,
         stale_order_timeout_sec=stale_order_timeout_sec,
+        retry_delays=retry_delays,
+        retry_statuses=retry_statuses,
+        warmup_min_btc_days=warmup_min_btc_days,
+        warmup_backfill_days=warmup_backfill_days,
         trades_log_path=trades_log_path,
         roostoo_api_log_path=roostoo_api_log_path,
     )

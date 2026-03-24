@@ -9,7 +9,7 @@ from typing import Any
 from bot.base import FeeSchedule, PlaceOrderSignal, Signal, Strategy, TradingContext
 from bot.price_store import BTC_PAIR, MS_PER_DAY
 from bot.regime import REGIME_RISK_OFF, REGIME_RISK_ON, compute_regime
-from bot.risk import get_drawdown_exposure, should_restore_exposure
+from bot.risk import DrawdownConfig, get_drawdown_exposure, should_restore_exposure
 from bot.strategies.utils import (
     get_balance_free,
     get_change_pct,
@@ -23,29 +23,28 @@ from bot.strategies.utils import (
 
 logger = logging.getLogger(__name__)
 
-# Minimum days of history for momentum (r7 needs 7+1 closes)
-MIN_DAYS_FOR_MOMENTUM = 8
+MIN_DAYS_FOR_MOMENTUM_DEFAULT = 8
 
 
 def _momentum_score(r1: float, r3: float, r7: float, w1: float, w3: float, w7: float) -> float:
     return w1 * r1 + w3 * r3 + w7 * r7
 
 
-def _rolling_volatility_7d(daily_closes: list[float]) -> float:
-    """Annualized volatility from 7 daily returns; floor 0.01."""
+def _rolling_volatility_7d(daily_closes: list[float], vol_floor: float = 0.01) -> float:
+    """Annualized volatility from 7 daily returns; floor at vol_floor."""
     if len(daily_closes) < 8:
-        return 0.01
+        return vol_floor
     returns = []
     for i in range(1, len(daily_closes)):
         if daily_closes[i - 1] and daily_closes[i - 1] > 0:
             returns.append((daily_closes[i] - daily_closes[i - 1]) / daily_closes[i - 1])
     if len(returns) < 2:
-        return 0.01
+        return vol_floor
     n = len(returns)
     mean_r = sum(returns) / n
     var = sum((r - mean_r) ** 2 for r in returns) / (n - 1) if n > 1 else 0.0
     vol = math.sqrt(var) if var > 0 else 0.0
-    return max(vol, 0.01)
+    return max(vol, vol_floor)
 
 
 class HybridTrendCrossSectionalStrategy(Strategy):
@@ -85,8 +84,16 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             limit_rate=float(config.get("fee_limit_rate", 0.0005)),
         )
         self._use_limit_fee_opt = bool(config.get("use_limit_fee_optimization", True))
+        self._limit_price_offset = float(config.get("limit_price_offset", 0.001))
         self._rank_buffer = int(config.get("rank_buffer", 2))
         self._min_hold_hours = float(config.get("min_hold_hours", 4.0))
+        self._min_days_momentum = int(config.get("min_days_momentum", MIN_DAYS_FOR_MOMENTUM_DEFAULT))
+        self._max_change_filter = float(config.get("max_change_filter", 0.50))
+        self._bottom_trim_pct = float(config.get("bottom_trim_pct", 0.20))
+        self._volatility_floor = float(config.get("volatility_floor", 0.01))
+        risk_cfg = config.get("risk") or {}
+        self._drawdown_config = DrawdownConfig.from_config(risk_cfg)
+        self._recovery_ratio = self._drawdown_config.recovery_ratio
         self._position_entry_time: dict[str, int] = {}
 
     def on_start(self) -> None:
@@ -140,16 +147,17 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         max_bid = get_max_bid(ticker, pair)
         min_ask = get_min_ask(ticker, pair)
 
+        offset = self._limit_price_offset
         if side == "BUY" and max_bid > 0:
             if min_ask > 0 and min_ask < max_bid:
                 return PlaceOrderSignal(pair, side, quantity, "MARKET", None)
-            limit_price = max_bid * 1.001
+            limit_price = max_bid * (1 + offset)
             return PlaceOrderSignal(pair, side, quantity, "LIMIT", limit_price)
 
         if side == "SELL" and min_ask > 0:
             if max_bid > 0 and min_ask < max_bid:
                 return PlaceOrderSignal(pair, side, quantity, "MARKET", None)
-            limit_price = min_ask * 0.999
+            limit_price = min_ask * (1 - offset)
             return PlaceOrderSignal(pair, side, quantity, "LIMIT", limit_price)
 
         return PlaceOrderSignal(pair, side, quantity, "MARKET", None)
@@ -236,10 +244,10 @@ class HybridTrendCrossSectionalStrategy(Strategy):
                 if price < self._min_price_usd:
                     continue
             ch = get_change_pct(context.ticker, pair)
-            if abs(ch) > 0.50:
+            if abs(ch) > self._max_change_filter:
                 continue
-            closes = store.get_daily_closes(pair, MIN_DAYS_FOR_MOMENTUM)
-            if len(closes) < MIN_DAYS_FOR_MOMENTUM:
+            closes = store.get_daily_closes(pair, self._min_days_momentum)
+            if len(closes) < self._min_days_momentum:
                 continue
             p0 = closes[-1]
             p1 = closes[-2] if len(closes) >= 2 else p0
@@ -249,7 +257,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             r3 = (p0 - p3) / p3 if p3 and p3 > 0 else 0.0
             r7 = (p0 - p7) / p7 if p7 and p7 > 0 else 0.0
             mom = _momentum_score(r1, r3, r7, w1, w3, w7)
-            vol = _rolling_volatility_7d(closes)
+            vol = _rolling_volatility_7d(closes, self._volatility_floor)
             scored.append((pair, mom, vol))
         scored.sort(key=lambda x: -x[1])
         return scored
@@ -260,7 +268,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         ranked = self._cross_sectional_rank(context)
         if not ranked:
             return {}
-        n_cut = max(1, int(len(ranked) * 0.20))
+        n_cut = max(1, int(len(ranked) * self._bottom_trim_pct))
         top_pool = ranked[:-n_cut] if n_cut < len(ranked) else ranked
 
         held_bases = {parse_pair(p)[0] for p in self._target_weights}
@@ -310,13 +318,14 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             self._portfolio_peak = portfolio_value
 
         base_exposure = self._get_base_exposure()
-        if should_restore_exposure(portfolio_value, self._portfolio_peak):
+        if should_restore_exposure(portfolio_value, self._portfolio_peak, self._recovery_ratio):
             self._effective_exposure = base_exposure
         else:
             exposure, force_risk_off = get_drawdown_exposure(
                 portfolio_value,
                 self._portfolio_peak,
                 base_exposure,
+                dd=self._drawdown_config,
             )
             self._effective_exposure = exposure
             if force_risk_off:
