@@ -35,7 +35,7 @@ strategy:
   # ---------------------------------------------------------------------------
   # Position sizing and rebalancing
   # ---------------------------------------------------------------------------
-  target_exposure: 0.80          # Fraction of portfolio in crypto when risk-on
+  target_exposure: 1.0           # 100% crypto / 0% cash when risk-on (full deployment)
   max_weight_per_coin: 0.20      # Maximum weight per single coin (cap concentration)
   min_trade_usd: 25.0            # Minimum notional (USD) per trade; smaller deltas are skipped
   min_rebalance_pct: 0.015       # Skip rebalance if delta < this fraction of target allocation
@@ -85,8 +85,8 @@ strategy:
   regime:
     ma_window: 20
     prelim_mode: true
-    strong_exposure: 0.80
-    soft_exposure: 0.50
+    strong_exposure: 1.0           # Full crypto when regime is risk_on_strong (same as target_exposure)
+    soft_exposure: 0.35
     consecutive_below_to_off: 2
     regime_eval_hours: 3             # Re-evaluate BTC regime every N hours (24 = once/day)
     breakout_threshold_pct: 0.02     # BTC must exceed MA20 by this % to trigger fast-entry

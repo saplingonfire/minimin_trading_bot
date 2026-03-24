@@ -209,6 +209,10 @@ python scripts/run_backtest.py --config config.yaml --data-dir data/binance [--s
 
 Read-only web UI to monitor your Roostoo account (balance, pending orders, server time, recent orders, ticker). Uses the same SDK; API keys stay on the server. **No trading** from the dashboard (competition rules).
 
+![Roostoo Bot Dashboard (Live)](dashboard.png)
+
+**What you see:** connection status and server time; a **portfolio summary** (total value, cash, per-asset quantity, price, value, 24h change, unrealized P&L, and allocation %); a **portfolio value** chart over time; a **ticker** strip (e.g. BTC/USD); and **recent orders** (pair, side, type, quantities, fill price, value, P&L, status, timestamps). Use **Refresh** and **Switch to Test/Live** to change account context without leaving the page.
+
 1. Dependencies are in `requirements.txt` (FastAPI, uvicorn).
 2. Set credentials in `.env` (same as bot). Use `DASHBOARD_USE_LIVE=true` to use live credentials.
 3. From repo root with venv activated:
