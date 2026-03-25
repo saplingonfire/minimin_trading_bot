@@ -52,13 +52,13 @@ class HybridTrendCrossSectionalStrategy(Strategy):
 
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
-        self._n = int(config.get("N", 5))
-        self._ma_window = int(config.get("ma_window", 20))
-        self._momentum_weights = config.get("momentum_weights") or [0.2, 0.3, 0.5]
+        self._n = int(config.get("N", 3))
+        self._ma_window = int(config.get("ma_window", 10))
+        self._momentum_weights = config.get("momentum_weights") or [0.5, 0.3, 0.2]
         if len(self._momentum_weights) != 3:
-            self._momentum_weights = [0.2, 0.3, 0.5]
-        self._target_exposure = float(config.get("target_exposure", 0.85))
-        self._max_weight_per_coin = float(config.get("max_weight_per_coin", 0.20))
+            self._momentum_weights = [0.5, 0.3, 0.2]
+        self._target_exposure = float(config.get("target_exposure", 1.0))
+        self._max_weight_per_coin = float(config.get("max_weight_per_coin", 0.35))
         self._min_trade_usd = float(config.get("min_trade_usd", 50.0))
         self._min_volume_usd = float(config.get("min_volume_usd", 500_000))
         self._min_price_usd = float(config.get("min_price_usd", 0.0))
@@ -76,7 +76,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._last_rank_time_ms: int | None = None
         self._target_weights: dict[str, float] = {}
         self._portfolio_peak: float = 0.0
-        self._effective_exposure: float = 0.85
+        self._effective_exposure: float = 1.0
         self._last_trade_time: dict[str, int] = {}
         self._exclude_pairs: list[str] = list(config.get("exclude_pairs") or [])
         self._fees = FeeSchedule(
@@ -85,7 +85,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         )
         self._use_limit_fee_opt = bool(config.get("use_limit_fee_optimization", True))
         self._limit_price_offset = float(config.get("limit_price_offset", 0.001))
-        self._rank_buffer = int(config.get("rank_buffer", 2))
+        self._rank_buffer = int(config.get("rank_buffer", 1))
         self._min_hold_hours = float(config.get("min_hold_hours", 4.0))
         self._min_days_momentum = int(config.get("min_days_momentum", MIN_DAYS_FOR_MOMENTUM_DEFAULT))
         self._max_change_filter = float(config.get("max_change_filter", 0.50))

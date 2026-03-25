@@ -21,9 +21,9 @@ REGIME_RISK_OFF = "risk_off"
 def _default_regime_config(config: dict[str, Any]) -> dict[str, Any]:
     r = config.get("regime") or {}
     return {
-        "ma_window": int(r.get("ma_window", 20)),
+        "ma_window": int(r.get("ma_window", 10)),
         "prelim_mode": bool(r.get("prelim_mode", True)),
-        "strong_exposure": float(r.get("strong_exposure", 0.85)),
+        "strong_exposure": float(r.get("strong_exposure", 1.0)),
         "soft_exposure": float(r.get("soft_exposure", 0.35)),
         "consecutive_below_to_off": int(r.get("consecutive_below_to_off", 2)),
         "regime_eval_hours": int(r.get("regime_eval_hours", 6)),

@@ -11,7 +11,7 @@ strategy:
   # ---------------------------------------------------------------------------
   # Universe selection — which pairs are eligible for ranking
   # ---------------------------------------------------------------------------
-  N: 5                           # Number of top momentum coins to hold
+  N: 3                           # Number of top momentum coins to hold
   min_volume_usd: 500000         # Minimum 24h USD volume for eligibility
   min_price_usd: 0.10            # Minimum coin price (USD) for eligibility
   min_days_history: 3            # Minimum calendar days of price data before a pair is eligible
@@ -28,15 +28,15 @@ strategy:
   # ---------------------------------------------------------------------------
   # Momentum signal — cross-sectional ranking
   # ---------------------------------------------------------------------------
-  ma_window: 20                  # BTC MA window (days) for regime filter
-  momentum_weights: [0.3, 0.3, 0.4]  # Weights for [1d, 3d, 7d] return in MomScore
+  ma_window: 10                  # BTC MA window (days) for regime filter
+  momentum_weights: [0.5, 0.3, 0.2]  # Weights for [1d, 3d, 7d] return in MomScore
   volatility_floor: 0.01        # Minimum annualized volatility (prevents 1/vol explosion)
 
   # ---------------------------------------------------------------------------
   # Position sizing and rebalancing
   # ---------------------------------------------------------------------------
   target_exposure: 1.0           # 100% crypto / 0% cash when risk-on (full deployment)
-  max_weight_per_coin: 0.20      # Maximum weight per single coin (cap concentration)
+  max_weight_per_coin: 0.35      # Maximum weight per single coin (cap concentration)
   min_trade_usd: 25.0            # Minimum notional (USD) per trade; smaller deltas are skipped
   min_rebalance_pct: 0.015       # Skip rebalance if delta < this fraction of target allocation
 
@@ -50,7 +50,7 @@ strategy:
   # ---------------------------------------------------------------------------
   # Turnover controls
   # ---------------------------------------------------------------------------
-  rank_buffer: 2                 # Held assets stay if within top N+buffer (hysteresis)
+  rank_buffer: 1                 # Held assets stay if within top N+buffer (hysteresis)
   min_hold_hours: 1.0            # Min hours before a position can be stale-sold
 
   # ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ strategy:
   # Throttled variant only: three-tier regime with sub-daily eval and breakout/breakdown
   # ---------------------------------------------------------------------------
   regime:
-    ma_window: 20
+    ma_window: 10
     prelim_mode: true
     strong_exposure: 1.0           # Full crypto when regime is risk_on_strong (same as target_exposure)
     soft_exposure: 0.35
