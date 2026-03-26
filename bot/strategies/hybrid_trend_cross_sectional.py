@@ -260,6 +260,9 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             r3 = (p0 - p3) / p3 if p3 and p3 > 0 else 0.0
             r7 = (p0 - p7) / p7 if p7 and p7 > 0 else 0.0
             mom = _momentum_score(r1, r3, r7, w1, w3, w7)
+            # Absolute momentum guard: never allocate to negative-trending assets
+            if mom <= 0:
+                continue
             vol = _rolling_volatility_7d(closes, self._volatility_floor)
             scored.append((pair, mom, vol))
         scored.sort(key=lambda x: -x[1])
