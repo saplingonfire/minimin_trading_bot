@@ -25,6 +25,7 @@ def test_get_target_exposure_prelim() -> None:
     """Prelim mode: strong -> strong_exposure, soft -> soft_exposure, risk_off -> 0."""
     config = {
         "N": 5,
+        "regime_filter_enabled": True,
         "regime": {
             "prelim_mode": True,
             "strong_exposure": 0.85,
@@ -47,6 +48,7 @@ def test_get_target_exposure_non_prelim() -> None:
     """Non-prelim (Option A): only risk_on_strong gets exposure; soft treated as risk_off."""
     config = {
         "N": 5,
+        "regime_filter_enabled": True,
         "regime": {
             "prelim_mode": False,
             "strong_exposure": 0.85,
@@ -245,7 +247,11 @@ def test_sub_daily_regime_eval_triggers_at_interval() -> None:
     try:
         for i in range(22):
             store.insert_daily_rows([("BTC/USD", (1000 + i) * MS_PER_DAY, 40000.0)])
-        config = {"N": 5, "regime": {"regime_eval_hours": 6, "consecutive_below_to_off": 2}}
+        config = {
+            "N": 5,
+            "regime_filter_enabled": True,
+            "regime": {"regime_eval_hours": 6, "consecutive_below_to_off": 2},
+        }
         strat = HybridTrendCrossSectionalThrottledStrategy(config)
         strat.on_start()
 
