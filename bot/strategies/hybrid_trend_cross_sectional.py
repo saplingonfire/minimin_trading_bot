@@ -1,4 +1,4 @@
-"""Hybrid Trend-Filter + Cross-Sectional Momentum: BTC MA20 regime + top-N MomScore, inverse-vol weights."""
+"""Hybrid Trend-Filter + Intraday Cross-Sectional Momentum: BTC MA20 regime + top-N hourly (4h/12h/24h) MomScore, inverse-vol weights."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import math
 from typing import Any
 
 from bot.base import FeeSchedule, PlaceOrderSignal, Signal, Strategy, TradingContext
-from bot.price_store import BTC_PAIR, MS_PER_DAY
+from bot.price_store import BTC_PAIR
 from bot.regime import REGIME_RISK_OFF, REGIME_RISK_ON, compute_regime
 from bot.risk import DrawdownConfig, get_drawdown_exposure, should_restore_exposure
 from bot.strategies.utils import (
@@ -23,38 +23,35 @@ from bot.strategies.utils import (
 
 logger = logging.getLogger(__name__)
 
-MIN_DAYS_FOR_MOMENTUM_DEFAULT = 8
+_MIN_HOURLY_BARS = 25
 
 
-def _momentum_score(r1: float, r3: float, r7: float, w1: float, w3: float, w7: float) -> float:
-    return w1 * r1 + w3 * r3 + w7 * r7
-
-
-def _rolling_volatility_7d(daily_closes: list[float], vol_floor: float = 0.01) -> float:
-    """Annualized volatility from 7 daily returns; floor at vol_floor."""
-    if len(daily_closes) < 8:
+def _rolling_volatility_24h(hourly_closes: list[float], vol_floor: float = 0.01) -> float:
+    """Std-dev of step-to-step hourly returns over ~24h of hourly closes; floor at vol_floor."""
+    if len(hourly_closes) < 2:
         return vol_floor
     returns = []
-    for i in range(1, len(daily_closes)):
-        if daily_closes[i - 1] and daily_closes[i - 1] > 0:
-            returns.append((daily_closes[i] - daily_closes[i - 1]) / daily_closes[i - 1])
+    for i in range(1, len(hourly_closes)):
+        prev = hourly_closes[i - 1]
+        if prev > 0:
+            returns.append((hourly_closes[i] - prev) / prev)
     if len(returns) < 2:
         return vol_floor
     n = len(returns)
     mean_r = sum(returns) / n
-    var = sum((r - mean_r) ** 2 for r in returns) / (n - 1) if n > 1 else 0.0
+    var = sum((r - mean_r) ** 2 for r in returns) / (n - 1)
     vol = math.sqrt(var) if var > 0 else 0.0
     return max(vol, vol_floor)
 
 
 class HybridTrendCrossSectionalStrategy(Strategy):
-    """BTC MA20 regime filter + cross-sectional momentum (MomScore), inverse-vol top-N, long-only."""
+    """BTC MA20 regime filter + intraday cross-sectional momentum (4h/12h/24h), inverse-vol top-N, long-only."""
 
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(config)
         self._n = int(config.get("N", 3))
         self._ma_window = int(config.get("ma_window", 10))
-        self._momentum_weights = config.get("momentum_weights") or [0.5, 0.3, 0.2]
+        self._momentum_weights = list(config.get("momentum_weights") or [0.5, 0.3, 0.2])
         if len(self._momentum_weights) != 3:
             self._momentum_weights = [0.5, 0.3, 0.2]
         self._target_exposure = float(config.get("target_exposure", 1.0))
@@ -88,7 +85,6 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._rank_buffer = int(config.get("rank_buffer", 1))
         self._regime_filter_enabled = bool(config.get("regime_filter_enabled", False))
         self._min_hold_hours = float(config.get("min_hold_hours", 4.0))
-        self._min_days_momentum = int(config.get("min_days_momentum", MIN_DAYS_FOR_MOMENTUM_DEFAULT))
         self._max_change_filter = float(config.get("max_change_filter", 0.50))
         self._bottom_trim_pct = float(config.get("bottom_trim_pct", 0.20))
         self._volatility_floor = float(config.get("volatility_floor", 0.01))
@@ -229,12 +225,11 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         logger.info("regime=%s candidate=%s", self._regime, self._regime_candidate)
 
     def _cross_sectional_rank(self, context: TradingContext) -> list[tuple[str, float, float]]:
-        """Return list of (pair, mom_score, vol) for eligible pairs, sorted by MomScore desc."""
+        """Return list of (pair, mom_score, vol) for eligible pairs using hourly 4h/12h/24h returns, sorted desc."""
         store = context.price_store
         if not store or not context.exchange_info:
             return []
         pairs = tradeable_pairs(context.exchange_info, exclude=self._exclude_pairs)
-        w1, w3, w7 = self._momentum_weights[0], self._momentum_weights[1], self._momentum_weights[2]
         scored: list[tuple[str, float, float]] = []
         for pair in pairs:
             if store.count_days_with_data(pair) < self._min_days_history:
@@ -249,21 +244,20 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             ch = get_change_pct(context.ticker, pair)
             if abs(ch) > self._max_change_filter:
                 continue
-            closes = store.get_daily_closes(pair, self._min_days_momentum)
-            if len(closes) < self._min_days_momentum:
+            closes = store.get_hourly_closes(pair, _MIN_HOURLY_BARS)
+            if len(closes) < _MIN_HOURLY_BARS:
                 continue
-            p0 = closes[-1]
-            p1 = closes[-2] if len(closes) >= 2 else p0
-            p3 = closes[-4] if len(closes) >= 4 else p1
-            p7 = closes[-8] if len(closes) >= 8 else p3
-            r1 = (p0 - p1) / p1 if p1 and p1 > 0 else 0.0
-            r3 = (p0 - p3) / p3 if p3 and p3 > 0 else 0.0
-            r7 = (p0 - p7) / p7 if p7 and p7 > 0 else 0.0
-            mom = _momentum_score(r1, r3, r7, w1, w3, w7)
+            if closes[-5] <= 0 or closes[-13] <= 0 or closes[-25] <= 0:
+                continue
+            r4 = (closes[-1] - closes[-5]) / closes[-5]
+            r12 = (closes[-1] - closes[-13]) / closes[-13]
+            r24 = (closes[-1] - closes[-25]) / closes[-25]
+            w4, w12, w24 = self._momentum_weights
+            mom = w4 * r4 + w12 * r12 + w24 * r24
             # Absolute momentum guard: never allocate to negative-trending assets
             if mom <= 0:
                 continue
-            vol = _rolling_volatility_7d(closes, self._volatility_floor)
+            vol = _rolling_volatility_24h(closes, self._volatility_floor)
             scored.append((pair, mom, vol))
         scored.sort(key=lambda x: -x[1])
         return scored

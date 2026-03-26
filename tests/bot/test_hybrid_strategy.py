@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from bot.base import PlaceOrderSignal, TradingContext
-from bot.price_store import MS_PER_DAY, PriceStore
+from bot.price_store import MS_PER_DAY, MS_PER_HOUR, PriceStore
 from bot.strategies.hybrid_trend_cross_sectional import HybridTrendCrossSectionalStrategy
 
 
@@ -45,22 +45,21 @@ def test_hybrid_returns_empty_when_risk_force_cash() -> None:
 
 
 def test_hybrid_momentum_score_ordering() -> None:
-    """Smoke test: strategy with minimal store and one tradeable pair computes without error."""
+    """Smoke test: strategy with hourly store data and one tradeable pair computes without error."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         store = PriceStore(Path(tmp) / "prices.db")
-        # 8+ days for BTC and one other so we have momentum
         base = 1000 * MS_PER_DAY
-        for i in range(10):
+        for i in range(30):
             store.insert_daily_rows([
-                ("BTC/USD", base + i * MS_PER_DAY, 40000.0 + i * 500),
-                ("ETH/USD", base + i * MS_PER_DAY, 2000.0 + i * 20),
+                ("BTC/USD", base + i * MS_PER_HOUR, 40000.0 + i * 50),
+                ("ETH/USD", base + i * MS_PER_HOUR, 2000.0 + i * 5),
             ])
-        strat = HybridTrendCrossSectionalStrategy({"N": 5, "min_days_history": 3})
+        strat = HybridTrendCrossSectionalStrategy({"N": 5, "min_days_history": 1})
         ctx = TradingContext(
-            server_time_ms=base + 9 * MS_PER_DAY,
+            server_time_ms=base + 29 * MS_PER_HOUR,
             ticker={
-                "BTC/USD": {"LastPrice": 45000, "UnitTradeValue": 1e9, "Change": 0.01},
-                "ETH/USD": {"LastPrice": 2200, "UnitTradeValue": 5e8, "Change": 0.02},
+                "BTC/USD": {"LastPrice": 41500, "UnitTradeValue": 1e9, "Change": 0.01},
+                "ETH/USD": {"LastPrice": 2150, "UnitTradeValue": 5e8, "Change": 0.02},
             },
             balance={"USD": {"Free": 50000, "Lock": 0}},
             pending_orders=[],
@@ -73,7 +72,6 @@ def test_hybrid_momentum_score_ordering() -> None:
             price_store=store,
         )
         signals = strat.next(ctx)
-        # May return 0 or more signals depending on regime and ranks
         assert isinstance(signals, list)
         for s in signals:
             assert hasattr(s, "pair") and hasattr(s, "side")

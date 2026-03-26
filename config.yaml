@@ -15,7 +15,6 @@ strategy:
   min_volume_usd: 500000         # Minimum 24h USD volume for eligibility
   min_price_usd: 0.10            # Minimum coin price (USD) for eligibility
   min_days_history: 3            # Minimum calendar days of price data before a pair is eligible
-  min_days_momentum: 8           # Minimum daily closes required for momentum/vol calculation (r7 needs 8)
   max_change_filter: 0.30        # Skip assets with |24h change| > this fraction (outlier filter)
   bottom_trim_pct: 0.20          # Trim bottom N% of ranked universe before selecting top-N
 
@@ -30,8 +29,8 @@ strategy:
   # ---------------------------------------------------------------------------
   regime_filter_enabled: false    # Enable BTC MA regime filter (risk-on/off gate)
   ma_window: 10                  # BTC MA window (days) for regime filter
-  momentum_weights: [0.5, 0.3, 0.2]  # Weights for [1d, 3d, 7d] return in MomScore
-  volatility_floor: 0.01        # Minimum annualized volatility (prevents 1/vol explosion)
+  momentum_weights: [0.5, 0.3, 0.2]  # Weights for [4h, 12h, 24h] return in MomScore
+  volatility_floor: 0.01        # Minimum hourly vol (std-dev of step returns; prevents 1/vol explosion)
 
   # ---------------------------------------------------------------------------
   # Position sizing and rebalancing
