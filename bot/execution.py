@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -41,7 +42,8 @@ def _round_quantity(qty: float, pair_info: dict[str, Any] | None) -> float:
     p = int(prec)
     if p == 0:
         return float(int(qty))
-    return round(qty, p)
+    factor = 10 ** p
+    return math.floor(qty * factor) / factor
 
 
 def _round_price(price: float, pair_info: dict[str, Any] | None) -> float:
