@@ -86,6 +86,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._use_limit_fee_opt = bool(config.get("use_limit_fee_optimization", True))
         self._limit_price_offset = float(config.get("limit_price_offset", 0.001))
         self._rank_buffer = int(config.get("rank_buffer", 1))
+        self._regime_filter_enabled = bool(config.get("regime_filter_enabled", False))
         self._min_hold_hours = float(config.get("min_hold_hours", 4.0))
         self._min_days_momentum = int(config.get("min_days_momentum", MIN_DAYS_FOR_MOMENTUM_DEFAULT))
         self._max_change_filter = float(config.get("max_change_filter", 0.50))
@@ -97,7 +98,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._position_entry_time: dict[str, int] = {}
 
     def on_start(self) -> None:
-        self._regime = REGIME_RISK_OFF
+        self._regime = REGIME_RISK_OFF if self._regime_filter_enabled else REGIME_RISK_ON
         self._regime_candidate = None
         self._last_regime_eval_bucket = None
         self._last_rank_time_ms = None
@@ -108,6 +109,8 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         self._position_entry_time = {}
 
     def _is_risk_off(self) -> bool:
+        if not self._regime_filter_enabled:
+            return False
         return self._regime == REGIME_RISK_OFF
 
     def _get_base_exposure(self) -> float:
@@ -333,7 +336,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
                 self._target_weights = {}
 
         now = context.server_time_ms
-        if self._is_regime_eval_time(now):
+        if self._regime_filter_enabled and self._is_regime_eval_time(now):
             self._compute_regime(context)
 
         force_rerank = self._pre_rerank(context, now)

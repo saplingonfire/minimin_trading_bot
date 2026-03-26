@@ -28,6 +28,7 @@ strategy:
   # ---------------------------------------------------------------------------
   # Momentum signal — cross-sectional ranking
   # ---------------------------------------------------------------------------
+  regime_filter_enabled: false    # Enable BTC MA regime filter (risk-on/off gate)
   ma_window: 10                  # BTC MA window (days) for regime filter
   momentum_weights: [0.5, 0.3, 0.2]  # Weights for [1d, 3d, 7d] return in MomScore
   volatility_floor: 0.01        # Minimum annualized volatility (prevents 1/vol explosion)

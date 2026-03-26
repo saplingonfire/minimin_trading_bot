@@ -53,7 +53,7 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
 
     def on_start(self) -> None:
         super().on_start()
-        self._regime = REGIME_RISK_OFF
+        self._regime = REGIME_RISK_OFF if self._regime_filter_enabled else REGIME_RISK_ON_STRONG
         self._consecutive_btc_below_ma = 0
         self._last_breakout_ms = None
         self._effective_exposure = self._get_target_exposure()
@@ -99,8 +99,10 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
 
     def _get_target_exposure(self) -> float:
         """Base target exposure from regime and prelim_mode (before drawdown ladder)."""
-        prelim = self._regime_config["prelim_mode"]
         strong = self._regime_config["strong_exposure"]
+        if not self._regime_filter_enabled:
+            return strong
+        prelim = self._regime_config["prelim_mode"]
         soft = self._regime_config["soft_exposure"]
         if not prelim:
             return strong if self._regime == REGIME_RISK_ON_STRONG else 0.0
@@ -111,12 +113,16 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
         return 0.0
 
     def _is_risk_off(self) -> bool:
+        if not self._regime_filter_enabled:
+            return False
         return self._regime == REGIME_RISK_OFF
 
     def _get_base_exposure(self) -> float:
         return self._get_target_exposure()
 
     def _compute_regime(self, context: TradingContext) -> None:
+        if not self._regime_filter_enabled:
+            return
         self._update_btc_regime(context)
 
     def _check_breakout(self, context: TradingContext) -> bool:
@@ -194,6 +200,8 @@ class HybridTrendCrossSectionalThrottledStrategy(HybridTrendCrossSectionalStrate
         return False
 
     def _pre_rerank(self, context: TradingContext, now: int) -> bool:
+        if not self._regime_filter_enabled:
+            return False
         breakdown_triggered = self._check_breakdown(context)
         if breakdown_triggered:
             return True
