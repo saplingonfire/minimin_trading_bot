@@ -363,6 +363,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
 
         sell_signals: list[Signal] = []
         buy_signals: list[Signal] = []
+        remaining_quote = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
         for pair in self._target_weights:
             if self._is_pair_on_cooldown(pair, now):
                 continue
@@ -386,12 +387,12 @@ class HybridTrendCrossSectionalStrategy(Strategy):
                     sell_signals.append(self._make_order_signal(pair, "SELL", to_sell, context.ticker))
                     self._record_trade(pair, now)
             else:
-                quote_free = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
-                spend = min(delta_usd, quote_free)
+                spend = min(delta_usd, remaining_quote)
                 if spend >= self._min_trade_usd and spend > 0:
                     buy_qty = spend / (price * (1 + self._fees.rate_for(fee_type)))
                     buy_signals.append(self._make_order_signal(pair, "BUY", buy_qty, context.ticker))
                     self._record_trade(pair, now)
+                    remaining_quote -= spend
 
         return stale_sells + sell_signals + buy_signals
 
