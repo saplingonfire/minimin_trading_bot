@@ -297,7 +297,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
         pv = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
         for pair in pairs:
             base, _ = parse_pair(pair)
-            qty = get_balance_free(context.balance, base)
+            qty = max(get_balance_free(context.balance, base), 0.0)
             price = get_price(context.ticker, pair)
             if price > 0:
                 pv += qty * price
@@ -355,9 +355,20 @@ class HybridTrendCrossSectionalStrategy(Strategy):
 
         stale_sells = self._sell_stale_positions(context, pairs, now)
 
+        stale_sell_proceeds = 0.0
+        for sig in stale_sells:
+            if hasattr(sig, "quantity") and hasattr(sig, "pair"):
+                sp = get_price(context.ticker, sig.pair)
+                if sp > 0:
+                    stale_sell_proceeds += sig.quantity * sp
+
         sell_signals: list[Signal] = []
         buy_signals: list[Signal] = []
-        remaining_quote = get_balance_free(context.balance, "USD") + get_balance_free(context.balance, "USDT")
+        remaining_quote = (
+            get_balance_free(context.balance, "USD")
+            + get_balance_free(context.balance, "USDT")
+            + stale_sell_proceeds
+        )
         for pair in self._target_weights:
             if self._is_pair_on_cooldown(pair, now):
                 continue
@@ -365,7 +376,7 @@ class HybridTrendCrossSectionalStrategy(Strategy):
             price = get_price(context.ticker, pair)
             if price <= 0:
                 continue
-            current_qty = get_balance_free(context.balance, base)
+            current_qty = max(get_balance_free(context.balance, base), 0.0)
             current_value = current_qty * price
             target = target_usd.get(pair, 0.0)
             delta_usd = target - current_value
